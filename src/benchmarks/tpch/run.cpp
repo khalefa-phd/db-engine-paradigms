@@ -113,8 +113,8 @@ if (q.count("3h1"))
       e.timeAndProfile("q3 hyper  one thread   ",
                        nrTuples(tpch, {"customer", "orders", "lineitem"}),
                        [&]() {
-                           clearOsCaches();
-                          auto result = q3_hyper1(tpch);
+                            if (clearCaches) clearOsCaches();
+                          auto result = q3_hyper_index(tpch);
                           escape(&result);
                        },
                        repetitions);
