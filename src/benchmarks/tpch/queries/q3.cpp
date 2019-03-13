@@ -35,7 +35,6 @@ using vectorwise::primitives::hash_t;
 //   l_orderkey,
 //   o_orderdate,
 //   o_shippriority
-
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper1(Database& db
                                                      ) {
 

@@ -10,6 +10,7 @@
 #include "vectorwise/Query.hpp"
 #include "vectorwise/QueryBuilder.hpp"
 
+
 struct Q1Builder : public Query, private vectorwise::QueryBuilder {
    enum {
       sel_date,

@@ -73,6 +73,15 @@ int main(int argc, char* argv[]) {
    }
 
    tbb::task_scheduler_init scheduler(nrThreads);
+/*if (q.count("test"))
+      e.timeAndProfile("test", nrTuples(tpch, {"lineitem"}),
+                       [&]() {
+                         
+                          auto result = test_ht();
+                          escape(&result);
+                       },
+                       repetitions);
+*/
    if (q.count("1h"))
       e.timeAndProfile("q1 hyper     ", nrTuples(tpch, {"lineitem"}),
                        [&]() {
@@ -81,6 +90,7 @@ int main(int argc, char* argv[]) {
                           escape(&result);
                        },
                        repetitions);
+
    if (q.count("1v"))
       e.timeAndProfile("q1 vectorwise", nrTuples(tpch, {"lineitem"}),
                        [&]() {
