@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
    bool clearCaches = false;
    if (argc > 3) nrThreads = atoi(argv[3]);
 
-   std::unordered_set<std::string> q = {"1h", "1v", "3h", "3v", "5h",  "5v",
+   std::unordered_set<std::string> q = {"1h", "1v", "3h","3h1", "3v", "5h",  "5v",
                                         "6h", "6v", "9h", "9v", "18h", "18v"};
 
    if (auto v = std::getenv("vectorSize")) vectorSize = atoi(v);
@@ -99,6 +99,16 @@ int main(int argc, char* argv[]) {
                           escape(&result);
                        },
                        repetitions);
+if (q.count("3h1"))
+      e.timeAndProfile("q3 hyper  one thread   ",
+                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                       [&]() {
+                           clearOsCaches();
+                          auto result = q3_hyper1(tpch);
+                          escape(&result);
+                       },
+                       repetitions);
+   
    if (q.count("3v"))
       e.timeAndProfile(
           "q3 vectorwise", nrTuples(tpch, {"customer", "orders", "lineitem"}),
