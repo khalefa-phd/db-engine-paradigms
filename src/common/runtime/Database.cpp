@@ -27,8 +27,8 @@ bool Database::hasRelation(std::string name) {
    return relations.find(name) != relations.end();
 }
 
-Relation& Database::operator[](std::string key) { return relations[key]; };
-
+Relation& Database::operator[](std::string key) { return relations[key]; }
+std::vector<size_t>& Database::getindex(std::string key) { return indexes[key]; }
 BlockRelation::Block BlockRelation::createBlock(size_t minNrElements) {
    auto elements = std::max(minBlockSize, minNrElements);
    auto a = this_worker->allocator.allocate(sizeof(BlockHeader) +

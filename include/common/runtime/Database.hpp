@@ -174,12 +174,14 @@ inline BlockRelation::Attribute BlockRelation::getAttribute(std::string name) {
 
 class Database {
    std::unordered_map<std::string, Relation> relations;
+   std::unordered_map<std::string, std::vector<size_t>> indexes;
 
  public:
    Database() = default;
    Database(Database&&) = default;
    Database(const Database&) = delete;
    Relation& operator[](std::string key);
+   std::vector<size_t>& getindex(std::string key);
    bool hasRelation(std::string name);
 };
 } // namespace runtime

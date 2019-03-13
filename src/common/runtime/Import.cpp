@@ -1,11 +1,32 @@
+#include <algorithm>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <iterator>
+#include <random>
+#include <stdlib.h>
+#include <vector>
+
+#include "errno.h"
+#include "sys/stat.h"
+#include "tbb/tbb.h"
+
+#include "benchmarks/tpch/Queries.hpp"
+#include "common/runtime/Hash.hpp"
+#include "common/runtime/Hashmap.hpp"
 #include "common/runtime/Import.hpp"
 #include "common/runtime/Mmap.hpp"
 #include "common/runtime/Types.hpp"
-#include "errno.h"
-#include "sys/stat.h"
-#include <fstream>
-#include <stdlib.h>
+#include "hyper/ParallelHelper.hpp"
 
+#include "vectorwise/Operations.hpp"
+#include "vectorwise/Operators.hpp"
+#include "vectorwise/Primitives.hpp"
+#include "vectorwise/QueryBuilder.hpp"
+#include "vectorwise/VectorAllocator.hpp"
+#include "vectorwise/defs.hpp"
+
+using namespace runtime;
 using namespace std;
 
 enum RTType {
@@ -178,6 +199,44 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
 #undef D
 }
 
+// void buildIndex(runtime::Relation& indx, std::vector<ColumnConfigOwning>&
+// cols,
+//                 std::vector<std::vector<size_t>> attributes, std::string dir,
+//                 std::string fileName) {
+//
+//    std::vector<ColumnConfig> colsC;
+//    for (auto& col : cols) {
+//       colsC.emplace_back(col.name, col.type.get());
+//       indx.insert(col.name, move(col.type));
+//    }
+//
+//    bool allColumnsMMaped = true;
+//    string cachedir = dir + "/cached/";
+//    if (!mkdir((dir + "/cached/").c_str(), 0777))
+//       throw runtime_error("Could not create dir 'cached': " + dir +
+//       "/cached/");
+//    for (auto& col : colsC)
+//       if (!std::ifstream(cachedir + fileName + "_" + col.name))
+//          allColumnsMMaped = false;
+//
+//    if (!allColumnsMMaped) {
+//
+//       size_t count = 0;
+//       for (auto& col : colsC)
+//          writeBinary(col, attributes[count++], cachedir + fileName);
+//    }
+//    // load mmaped files
+//    size_t size = 0;
+//    size_t diffs = 0;
+//    for (auto& col : colsC) {
+//       auto oldSize = size;
+//       size = readBinary(indx, col, cachedir + fileName);
+//       diffs += (oldSize != size);
+//    }
+//    if (diffs > 1)
+//       throw runtime_error("Columns of " + fileName + " differ in size.");
+//    indx.nrTuples = size;
+// }
 void parseColumns(runtime::Relation& r, std::vector<ColumnConfigOwning>& cols,
                   std::string dir, std::string fileName) {
 
@@ -366,8 +425,50 @@ void importTPCH(std::string dir, Database& db) {
                    {"r_comment", make_unique<algebra::Varchar>(152)}});
       parseColumns(rel, columns, dir, "region");
    }
-}
+   // build indexes
+   {
+      auto& indx = db.getindex("cust_ord");
+      auto& indx_val = db.getindex("cust_ord_vals");
 
+      auto& cu = db["customer"];
+      auto& ord = db["orders"];
+
+      auto c_custkey = cu["c_custkey"].data<types::Integer>();
+      auto o_custkey = ord["o_custkey"].data<types::Integer>();
+      auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+
+      using hash = runtime::CRC32Hash;
+      Hashmapx<types::Integer, types::Integer, hash> ht;
+      runtime::Stack<decltype(ht)::Entry> entries;
+      size_t count = 0;
+      for (size_t i = 0; i < ord.nrTuples; i++) {
+         entries.emplace_back(ht.hash(o_custkey[i]), o_custkey[i],
+                              o_orderkey[i]);
+         count++;
+      }
+      ht.setSize(count);
+      ht.insertAll(entries);
+
+      // iterate over customer table
+      // vector<size_t> cnts(cu.nrTuples + 1);
+      size_t cnt = 0;
+      for (size_t i = 0; i < cu.nrTuples; i++) {
+         auto h = ht.hash(c_custkey[i]);
+
+         auto entry =
+             reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
+
+         for (; entry != ht.end();
+              entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next))
+            if (entry->h.hash == h && entry->k == c_custkey[i]) {
+               // cout << entry->v << endl;
+               indx_val.emplace_back(entry->v.value);
+               cnt++;
+            }
+         indx.emplace_back(cnt);
+      }
+   }
+}
 void importSSB(std::string dir, Database& db) {
 
    //--------------------------------------------------------------------------------
