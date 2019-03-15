@@ -35,9 +35,11 @@ using vectorwise::primitives::hash_t;
 //   l_orderkey,
 //   o_orderdate,
 //   o_shippriority
+#define TWO_INDEX
+#ifdef ONE_INDEX
 NOVECTORIZE std::unique_ptr<runtime::Query>
 q3_hyper_index(runtime::Database& db) {
-
+   cout << "hi from q3_hyper index" << endl;
    // --- aggregates
    auto resources = initQuery(1);
 
@@ -160,120 +162,117 @@ q3_hyper_index(runtime::Database& db) {
    leaveQuery(1);
    return move(resources.query);
 }
+#endif
 
-// NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper1(Database& db) {
-//    // --- aggregates
-//    size_t nrThreads = 1;
-//    auto resources = initQuery(nrThreads);
-//
-//    // --- constants
-//    auto c1 = types::Date::castString("1995-03-15");
-//    auto c2 = types::Date::castString("1995-03-15");
-//    string b = "BUILDING";
-//    auto c3 = types::Char<10>::castString(b.data(), b.size());
-//
-//    auto& cu = db["customer"];
-//    auto& ord = db["orders"];
-//    auto& li = db["lineitem"];
-//
-//    auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
-//    auto c_custkey = cu["c_custkey"].data<types::Integer>();
-//    auto o_custkey = ord["o_custkey"].data<types::Integer>();
-//    auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
-//    auto o_orderdate = ord["o_orderdate"].data<types::Date>();
-//    auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-//    auto l_orderkey = li["l_orderkey"].data<types::Integer>();
-//    auto l_shipdate = li["l_shipdate"].data<types::Date>();
-//    auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12,
-//    2>>(); auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
-//
-//    using hash = runtime::CRC32Hash;
-//
-//    // build ht for first join
-//    Hashset<types::Integer, hash> ht1;
-//    runtime::Stack<decltype(ht1)::Entry> entries1;
-//    size_t found1 = 0;
-//
-//    for (size_t i = 0, end = cu.nrTuples; i != end; ++i) {
-//       if (c_mktsegment[i] == c3) {
-//          entries1.emplace_back(ht1.hash(c_custkey[i]), c_custkey[i]);
-//          found1++;
-//       }
-//    }
-//
-//    ht1.setSize(found1);
-//    ht1.insertAll(entries1);
-//
-//    // join and build second ht
-//    Hashmapx<types::Integer, std::tuple<types::Date, types::Integer>, hash>
-//    ht2; runtime::Stack<decltype(ht2)::Entry> entries2; auto found2 = 0; for
-//    (size_t i = 0, end = ord.nrTuples; i != end; ++i)
-//       if (o_orderdate[i] < c1 && ht1.contains(o_custkey[i])) {
-//          cout << "-\t" << o_custkey[i] << "\t" << o_orderkey[i] << endl;
-//          entries2.emplace_back(ht2.hash(o_orderkey[i]), o_orderkey[i],
-//                                make_tuple(o_orderdate[i],
-//                                o_shippriority[i]));
-//          found2++;
-//       }
-//
-//    ht2.setSize(found2);
-//    ht2.insertAll(entries2);
-//
-//    const auto one = types::Numeric<12, 2>::castString("1.00");
-//    const auto zero = types::Numeric<12, 4>::castString("0.00");
-//
-//    Hashmapx<std::tuple<types::Integer, types::Date, types::Integer>,
-//             types::Numeric<12, 4>, hash, false>
-//        groups;
-//
-//    auto groupOp =
-//        make_GroupBy<std::tuple<types::Integer, types::Date, types::Integer>,
-//                     types::Numeric<12, 4>, hash>(
-//            [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
-//
-//    // preaggregation
-//
-//    auto locals = groupOp.preAggLocals();
-//
-//    for (size_t i = 0, end = li.nrTuples; i != end; ++i) {
-//       decltype(ht2)::value_type* v;
-//       if (l_shipdate[i] > c2 && (v = ht2.findOne(l_orderkey[i]))) {
-//          locals.consume(make_tuple(l_orderkey[i], get<0>(*v), get<1>(*v)),
-//                         l_extendedprice[i] * (one - l_discount[i]));
-//       }
-//    }
-//
-//    // --- output
-//    auto& result = resources.query->result;
-//    auto revAttr =
-//        result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
-//    auto orderAttr = result->addAttribute("l_orderkey",
-//    sizeof(types::Integer)); auto dateAttr =
-//    result->addAttribute("o_orderdate", sizeof(types::Date)); auto prioAttr =
-//        result->addAttribute("o_shippriority", sizeof(types::Integer));
-//
-//    groupOp.forallGroups([&](auto& entries) {
-//       // write aggregates to result
-//       auto n = entries.size();
-//       auto block = result->createBlock(n);
-//       auto rev = reinterpret_cast<types::Numeric<12,
-//       4>*>(block.data(revAttr)); auto order =
-//       reinterpret_cast<types::Integer*>(block.data(orderAttr)); auto date =
-//       reinterpret_cast<types::Date*>(block.data(dateAttr)); auto prio =
-//       reinterpret_cast<types::Integer*>(block.data(prioAttr)); for (auto
-//       block : entries)
-//          for (auto& entry : block) {
-//             *order++ = get<0>(entry.k);
-//             *date++ = get<1>(entry.k);
-//             *prio++ = get<2>(entry.k);
-//             *rev++ = entry.v;
-//          }
-//       block.addedElements(n);
-//    });
-//
-//    leaveQuery(nrThreads);
-//    return move(resources.query);
-// }
+#ifdef TWO_INDEX
+NOVECTORIZE std::unique_ptr<runtime::Query>
+q3_hyper_index(runtime::Database& db) {
+#ifdef VERBOSE
+   cout << "hi from q3_hyper index" << endl;
+#endif
+   // --- aggregates
+   auto resources = initQuery(1);
+
+   // --- constants
+   auto c1 = types::Date::castString("1995-03-15");
+   auto c2 = types::Date::castString("1995-03-15");
+   string b = "BUILDING";
+   auto c3 = types::Char<10>::castString(b.data(), b.size());
+
+   auto& indx = db.getindex("cust_ord");
+   auto& indx_val = db.getindex("cust_ord_vals");
+
+   auto& iord = db.getindex("ord_li");
+   auto& iord_val = db.getindex("ord_li_vals");
+
+   auto& cu = db["customer"];
+   auto& ord = db["orders"];
+   auto& li = db["lineitem"];
+
+   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+   auto c_custkey = cu["c_custkey"].data<types::Integer>();
+   auto o_custkey = ord["o_custkey"].data<types::Integer>();
+   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+   auto l_shipdate = li["l_shipdate"].data<types::Date>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+
+   std::vector<std::tuple<types::Integer, types::Date, types::Integer,
+                          types::Numeric<12, 4>>>
+       entries;
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+   const auto zero = types::Numeric<12, 4>::castString("0.00");
+#ifdef VERBOSE
+   cout << "query" << endl;
+#endif
+   for (size_t i = 0, end = cu.nrTuples; i != end; ++i) {
+      if (c_mktsegment[i] == c3) {
+         size_t b = 0;
+         if (i > 0) b = indx[i - 1];
+         size_t e = indx[i];
+
+         for (size_t j = b; j < e; j++) {
+            size_t m = indx_val[j];
+            if (o_orderdate[m] < c1) {
+               // do not add it to the hash table
+               // we can compute the value now
+               size_t order_begin = 0;
+               size_t order_end = 0;
+               if (j > 0) order_begin = iord[j - 1];
+               order_end = iord[j];
+               types::Numeric<12, 4> agg = 0;
+               for (size_t k = order_begin; j < order_end; j++) {
+                  auto li_indx = iord_val[k];
+                  if (l_shipdate[li_indx] > c2) {
+                     agg += (l_extendedprice[li_indx] *
+                             (one - l_discount[li_indx]));
+                  }
+               }
+               entries.emplace_back(make_tuple(l_orderkey[m], o_orderdate[m],
+                                               o_shippriority[m], agg));
+            }
+         }
+      }
+   }
+#ifdef VERBOSE
+   cout << "Preparing results" << endl;
+#endif
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+   auto prioAttr =
+       result->addAttribute("o_shippriority", sizeof(types::Integer));
+
+   // write aggregates to result
+   auto n = entries.size();
+   auto block = result->createBlock(n);
+   auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+   auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
+   auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
+   auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
+   for (auto& entry : entries) {
+      *order++ = get<0>(entry);
+      *date++ = get<1>(entry);
+      *prio++ = get<2>(entry);
+      *rev++ = get<3>(entry);
+   }
+   block.addedElements(n);
+
+#ifdef VERBOSE
+   cout << "done results" << endl;
+   cout << "size" << n << endl;
+#endif
+   leaveQuery(1);
+
+   return move(resources.query);
+}
+#endif
 
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper1(Database& db) {
 
@@ -421,7 +420,9 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper(Database& db,
                                                      size_t nrThreads) {
 
    // --- aggregates
-
+#ifdef VERBOSE
+   cout << "hi from q3_hyper" << endl;
+#endif
    auto resources = initQuery(nrThreads);
 
    // --- constants
@@ -534,10 +535,11 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper(Database& db,
    auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
    auto prioAttr =
        result->addAttribute("o_shippriority", sizeof(types::Integer));
-
+   std::atomic<size_t> n_t;
    groupOp.forallGroups([&](auto& entries) {
       // write aggregates to result
       auto n = entries.size();
+      n_t.fetch_add(n, std::memory_order_relaxed);
       auto block = result->createBlock(n);
       auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
       auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
@@ -554,6 +556,9 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper(Database& db,
    });
 
    leaveQuery(nrThreads);
+#ifdef VERBOSE
+   cout << "size :" << n_t << endl;
+#endif
    return move(resources.query);
 }
 

@@ -471,6 +471,51 @@ void importTPCH(std::string dir, Database& db) {
          indx.emplace_back(cnt);
       }
    }
+
+   // build indexes
+   {
+      auto& indx = db.getindex("ord_li");
+      auto& indx_val = db.getindex("ord_li_vals");
+
+      auto& ord = db["orders"];
+      auto& li = db["lineitem"];
+
+      auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+      auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+
+      using hash = runtime::CRC32Hash;
+      Hashmapx<types::Integer, size_t, hash> ht;
+      runtime::Stack<decltype(ht)::Entry> entries;
+      size_t count = 0;
+      for (size_t i = 0; i < li.nrTuples; i++) {
+         entries.emplace_back(ht.hash(o_orderkey[i]), o_orderkey[i], i);
+         count++;
+      }
+      ht.setSize(count);
+      ht.insertAll(entries);
+
+      // iterate over orders table
+      size_t cnt = 0;
+      for (size_t i = 0; i < ord.nrTuples; i++) {
+         auto h = ht.hash(o_orderkey[i]);
+
+         auto entry =
+             reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
+
+         for (; entry != ht.end();
+              entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next))
+            if (entry->h.hash == h && entry->k == o_orderkey[i]) {
+#ifdef VERBOSE
+               cout << "*"
+                    << "\t" << i << "\t" << o_orderkey[i] << "\t" << entry->v
+                    << endl;
+#endif
+               indx_val.emplace_back(entry->v);
+               cnt++;
+            }
+         indx.emplace_back(cnt);
+      }
+   }
 }
 void importSSB(std::string dir, Database& db) {
 
