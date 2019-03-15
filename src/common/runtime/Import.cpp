@@ -435,15 +435,14 @@ void importTPCH(std::string dir, Database& db) {
 
       auto c_custkey = cu["c_custkey"].data<types::Integer>();
       auto o_custkey = ord["o_custkey"].data<types::Integer>();
-      auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+      //  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
 
       using hash = runtime::CRC32Hash;
-      Hashmapx<types::Integer, types::Integer, hash> ht;
+      Hashmapx<types::Integer, size_t, hash> ht;
       runtime::Stack<decltype(ht)::Entry> entries;
       size_t count = 0;
       for (size_t i = 0; i < ord.nrTuples; i++) {
-         entries.emplace_back(ht.hash(o_custkey[i]), o_custkey[i],
-                              o_orderkey[i]);
+         entries.emplace_back(ht.hash(o_custkey[i]), o_custkey[i], i);
          count++;
       }
       ht.setSize(count);
@@ -461,8 +460,12 @@ void importTPCH(std::string dir, Database& db) {
          for (; entry != ht.end();
               entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next))
             if (entry->h.hash == h && entry->k == c_custkey[i]) {
-               // cout << entry->v << endl;
-               indx_val.emplace_back(entry->v.value);
+#ifdef VERBOSE
+               cout << "*"
+                    << "\t" << i << "\t" << c_custkey[i] << "\t" << entry->v
+                    << endl;
+#endif
+               indx_val.emplace_back(entry->v);
                cnt++;
             }
          indx.emplace_back(cnt);
