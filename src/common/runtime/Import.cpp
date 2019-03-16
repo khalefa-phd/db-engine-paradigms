@@ -441,15 +441,15 @@ void importTPCH(std::string dir, Database& db) {
       Hashmapx<types::Integer, size_t, hash> ht;
       runtime::Stack<decltype(ht)::Entry> entries;
       size_t count = 0;
-      for (size_t i = 0; i < ord.nrTuples; i++) {
+      for (size_t i = ord.nrTuples - 1;; i--) {
          entries.emplace_back(ht.hash(o_custkey[i]), o_custkey[i], i);
          count++;
+         if (i == 0) break;
       }
       ht.setSize(count);
       ht.insertAll(entries);
-
+      // cout << "+++++++++++++++++++++++++++++++++++++" << endl;
       // iterate over customer table
-      // vector<size_t> cnts(cu.nrTuples + 1);
       size_t cnt = 0;
       for (size_t i = 0; i < cu.nrTuples; i++) {
          auto h = ht.hash(c_custkey[i]);
@@ -487,9 +487,11 @@ void importTPCH(std::string dir, Database& db) {
       Hashmapx<types::Integer, size_t, hash> ht;
       runtime::Stack<decltype(ht)::Entry> entries;
       size_t count = 0;
-      for (size_t i = 0; i < li.nrTuples; i++) {
+      //  cout << "+++++++++++++++++++++++++++++++++++" << endl;
+      for (size_t i = li.nrTuples - 1;; i--) {
          entries.emplace_back(ht.hash(o_orderkey[i]), o_orderkey[i], i);
          count++;
+         if (i == 0) break;
       }
       ht.setSize(count);
       ht.insertAll(entries);

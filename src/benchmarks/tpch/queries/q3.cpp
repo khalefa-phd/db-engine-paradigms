@@ -90,23 +90,19 @@ q3_hyper_index(runtime::Database& db) {
    for (size_t i = 0, end = cu.nrTuples; i != end; ++i) {
       if (c_mktsegment[i] == c3) {
          customer_count++;
-         // cout << "Customer id " << c_custkey[i] << endl;
-
-         size_t b = 0;
-         if (i > 0) b = indx[i - 1];
+         // cout << "****************************************" << endl;
+         size_t b = (i > 0) ? indx[i - 1] : 0;
          size_t e = indx[i];
 
          for (size_t j = b; j < e; j++) {
             size_t order_id = indx_val[j];
-            //  cout << "\t order id" << o_orderkey[order_id] << endl;
+            //    cout << "\t\t" << order_id << endl;
             if (o_orderdate[order_id] < c1) {
                // do not add it to the hash table
                // we can compute the value now
                order_count++;
-               size_t order_begin = 0;
-               size_t order_end = 0;
-               if (order_id > 0) order_begin = iord[order_id - 1];
-               order_end = iord[order_id];
+               size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+               size_t order_end = iord[order_id];
                types::Numeric<12, 4> agg = 0;
                for (size_t k = order_begin; k < order_end; k++) {
                   line_count++;
