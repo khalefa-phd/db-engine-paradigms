@@ -489,10 +489,11 @@ void importTPCH(std::string dir, Database& db) {
       size_t count = 0;
       //  cout << "+++++++++++++++++++++++++++++++++++" << endl;
       for (size_t i = li.nrTuples - 1;; i--) {
-         entries.emplace_back(ht.hash(o_orderkey[i]), o_orderkey[i], i);
+         entries.emplace_back(ht.hash(l_orderkey[i]), l_orderkey[i], i);
          count++;
          if (i == 0) break;
       }
+      // cout << "count " << count << endl;
       ht.setSize(count);
       ht.insertAll(entries);
 
@@ -505,7 +506,7 @@ void importTPCH(std::string dir, Database& db) {
              reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
 
          for (; entry != ht.end();
-              entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next))
+              entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next)) {
             if (entry->h.hash == h && entry->k == o_orderkey[i]) {
 #ifdef VERBOSE
                cout << "*"
@@ -515,10 +516,39 @@ void importTPCH(std::string dir, Database& db) {
                indx_val.emplace_back(entry->v);
                cnt++;
             }
+         }
          indx.emplace_back(cnt);
       }
+      // cout << "cnt " << cnt << endl;
    }
+#ifdef VERBOSE
+   cout << "______________________________________________" << endl;
+   {
+      auto& ci = db.getindex("cust_ord");
+      auto& cv = db.getindex("cust_ord_vals");
+      for (size_t i = 0; i < ci.size(); i++) {
+         size_t b = i > 0 ? ci[i - 1] : 0;
+         size_t e = ci[i];
+         std::cout << i << "\tcnt " << (e - b) << endl;
+         for (size_t j = b; j < e; j++) cout << "\t" << cv[j] << endl;
+      }
+   }
+   {
+      cout << "______________________________________________" << endl;
+      auto& oi = db.getindex("ord_li");
+      auto& ov = db.getindex("ord_li_vals");
+
+      for (size_t i = 0; i < oi.size(); i++) {
+         size_t b = i > 0 ? oi[i - 1] : 0;
+         size_t e = oi[i];
+         std::cout << i << "\tcnt " << (e - b) << endl;
+         for (size_t j = b; j < e; j++) cout << "\t" << ov[j] << endl;
+      }
+   }
+   cout << "______________________________________________" << endl;
+#endif
 }
+
 void importSSB(std::string dir, Database& db) {
 
    //--------------------------------------------------------------------------------

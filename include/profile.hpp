@@ -92,18 +92,18 @@ struct PerfEvents {
          add("stores", "mem_inst_retired.all_stores");
          add("loads", "mem_inst_retired.all_loads");
          add("mem_stall", "cycle_activity.stalls_mem_any");
-         //add("page-faults", "page-faults");
+         // add("page-faults", "page-faults");
       } else {
          add("cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES);
          add("LLC-misses", PERF_TYPE_HW_CACHE,
              PERF_COUNT_HW_CACHE_LL | (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-             (PERF_COUNT_HW_CACHE_RESULT_MISS << 16));
+                 (PERF_COUNT_HW_CACHE_RESULT_MISS << 16));
          add("l1-misses", PERF_TYPE_HW_CACHE,
              PERF_COUNT_HW_CACHE_L1D | (PERF_COUNT_HW_CACHE_OP_READ << 8) |
                  (PERF_COUNT_HW_CACHE_RESULT_MISS << 16));
          add("l1-hits", PERF_TYPE_HW_CACHE,
              PERF_COUNT_HW_CACHE_L1D | (PERF_COUNT_HW_CACHE_OP_READ << 8) |
-             (PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16));
+                 (PERF_COUNT_HW_CACHE_RESULT_ACCESS << 16));
          add("stores", "cpu/mem-stores/");
          add("loads", "cpu/mem-loads/");
          add("instr.", PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS);
@@ -190,10 +190,10 @@ struct PerfEvents {
       for (auto& ev : events) {
          for (auto& event : ev.second) {
 #ifdef __linux__
-           ioctl(event.fd, PERF_EVENT_IOC_ENABLE, 0);
-           if (read(event.fd, &event.prev, sizeof(uint64_t) * 3) !=
-               sizeof(uint64_t) * 3)
-             std::cerr << "Error reading counter " << ev.first << std::endl;
+            ioctl(event.fd, PERF_EVENT_IOC_ENABLE, 0);
+            if (read(event.fd, &event.prev, sizeof(uint64_t) * 3) !=
+                sizeof(uint64_t) * 3)
+               std::cerr << "Error reading counter " << ev.first << std::endl;
 #else
             compat::unused(event);
 #endif

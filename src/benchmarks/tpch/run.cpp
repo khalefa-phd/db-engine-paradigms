@@ -51,11 +51,12 @@ int main(int argc, char* argv[]) {
    // run queries
    auto repetitions = atoi(argv[1]);
    size_t nrThreads = std::thread::hardware_concurrency();
+   std::cout << "Nthread " << nrThreads << std::endl;
    size_t vectorSize = 1024;
    bool clearCaches = false;
    if (argc > 3) nrThreads = atoi(argv[3]);
 
-   std::unordered_set<std::string> q = {"1h", "1v",  "3h", "3h1", "3v",
+   std::unordered_set<std::string> q = {"1h", "1v",  "3h", "3hi", "3v",
                                         "5h", "5v",  "6h", "6v",  "9h",
                                         "9v", "18h", "18v"};
 
@@ -74,15 +75,17 @@ int main(int argc, char* argv[]) {
    }
 
    tbb::task_scheduler_init scheduler(nrThreads);
-   /*if (q.count("test"))
-         e.timeAndProfile("test", nrTuples(tpch, {"lineitem"}),
-                          [&]() {
-
-                             auto result = test_ht();
-                             escape(&result);
-                          },
-                          repetitions);
-   */
+#if 0
+   {
+      auto result = q3_hyper(tpch, nrThreads);
+      escape(&result);
+   }
+   {
+      auto result = q3_hyper_index(tpch, nrThreads);
+      escape(&result);
+   }
+#endif
+#if 0
    if (q.count("1h"))
       e.timeAndProfile("q1 hyper     ", nrTuples(tpch, {"lineitem"}),
                        [&]() {
@@ -101,6 +104,8 @@ int main(int argc, char* argv[]) {
                           escape(&result);
                        },
                        repetitions);
+#endif
+#if 1
    if (q.count("3h"))
       e.timeAndProfile("q3 hyper     ",
                        nrTuples(tpch, {"customer", "orders", "lineitem"}),
@@ -111,25 +116,16 @@ int main(int argc, char* argv[]) {
                        },
                        repetitions);
    if (q.count("3hi"))
-      e.timeAndProfile("q3 hyper  index  ",
+      e.timeAndProfile("q3 hyper index",
                        nrTuples(tpch, {"customer", "orders", "lineitem"}),
                        [&]() {
                           if (clearCaches) clearOsCaches();
-                          auto result = q3_hyper_index(tpch);
+                          auto result = q3_hyper_index(tpch, nrThreads);
                           escape(&result);
                        },
                        repetitions);
-
-   if (q.count("3h1"))
-      e.timeAndProfile("q3 hyper  one thread   ",
-                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
-                       [&]() {
-                          if (clearCaches) clearOsCaches();
-                          auto result = q3_hyper1(tpch);
-                          escape(&result);
-                       },
-                       repetitions);
-
+#endif
+#if 0
    if (q.count("3v"))
       e.timeAndProfile(
           "q3 vectorwise", nrTuples(tpch, {"customer", "orders", "lineitem"}),
@@ -218,6 +214,7 @@ int main(int argc, char* argv[]) {
              escape(&result);
           },
           repetitions);
+#endif
    scheduler.terminate();
    return 0;
 }

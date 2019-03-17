@@ -37,8 +37,9 @@ class Worker
       // set reference to worker in this thread
       this_worker = this;
       currentBarrier = 0;
-
+      // std::cout << "Starting Thread \n";
       function();
+      // std::cout << "done Thread \n";
    };
    Worker(WorkerGroup* g, std::function<void()> f, HierarchicBarrier* b)
        : group(g), barrier(b), function(f){};
@@ -165,7 +166,7 @@ inline bool __attribute__((noinline)) barrier()
 }
 
 template <typename F>
-inline bool __attribute__ ((noinline)) barrier(F finalizer)
+inline bool __attribute__((noinline)) barrier(F finalizer)
 /// Shorthand for using the current thread groups barrier
 {
    return this_worker->barrier->wait(finalizer);
