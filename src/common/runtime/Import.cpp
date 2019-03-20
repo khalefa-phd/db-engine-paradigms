@@ -9,6 +9,7 @@
 
 #include "errno.h"
 #include "sys/stat.h"
+#include "sys/time.h"
 #include "tbb/tbb.h"
 
 #include "benchmarks/tpch/Queries.hpp"
@@ -28,6 +29,12 @@
 
 using namespace runtime;
 using namespace std;
+
+static inline double gettime() {
+   struct timeval now_tv;
+   gettimeofday(&now_tv, NULL);
+   return ((double)now_tv.tv_sec) + ((double)now_tv.tv_usec) / 1000000.0;
+}
 
 enum RTType {
    Integer,
@@ -425,101 +432,109 @@ void importTPCH(std::string dir, Database& db) {
                    {"r_comment", make_unique<algebra::Varchar>(152)}});
       parseColumns(rel, columns, dir, "region");
    }
-   // build indexes
    {
-      auto& indx = db.getindex("cust_ord");
-      auto& indx_val = db.getindex("cust_ord_vals");
+      auto start = gettime();
 
-      auto& cu = db["customer"];
-      auto& ord = db["orders"];
+      // build indexes
+      {
+         auto& indx = db.getindex("cust_ord");
+         auto& indx_val = db.getindex("cust_ord_vals");
 
-      auto c_custkey = cu["c_custkey"].data<types::Integer>();
-      auto o_custkey = ord["o_custkey"].data<types::Integer>();
-      //  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+         auto& cu = db["customer"];
+         auto& ord = db["orders"];
 
-      using hash = runtime::CRC32Hash;
-      Hashmapx<types::Integer, size_t, hash> ht;
-      runtime::Stack<decltype(ht)::Entry> entries;
-      size_t count = 0;
-      for (size_t i = ord.nrTuples - 1;; i--) {
-         entries.emplace_back(ht.hash(o_custkey[i]), o_custkey[i], i);
-         count++;
-         if (i == 0) break;
-      }
-      ht.setSize(count);
-      ht.insertAll(entries);
-      // cout << "+++++++++++++++++++++++++++++++++++++" << endl;
-      // iterate over customer table
-      size_t cnt = 0;
-      for (size_t i = 0; i < cu.nrTuples; i++) {
-         auto h = ht.hash(c_custkey[i]);
+         auto c_custkey = cu["c_custkey"].data<types::Integer>();
+         auto o_custkey = ord["o_custkey"].data<types::Integer>();
+         //  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
 
-         auto entry =
-             reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
-
-         for (; entry != ht.end();
-              entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next))
-            if (entry->h.hash == h && entry->k == c_custkey[i]) {
-#ifdef VERBOSE
-               cout << "*"
-                    << "\t" << i << "\t" << c_custkey[i] << "\t" << entry->v
-                    << endl;
-#endif
-               indx_val.emplace_back(entry->v);
-               cnt++;
-            }
-         indx.emplace_back(cnt);
-      }
-   }
-
-   // build indexes
-   {
-      auto& indx = db.getindex("ord_li");
-      auto& indx_val = db.getindex("ord_li_vals");
-
-      auto& ord = db["orders"];
-      auto& li = db["lineitem"];
-
-      auto l_orderkey = li["l_orderkey"].data<types::Integer>();
-      auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
-
-      using hash = runtime::CRC32Hash;
-      Hashmapx<types::Integer, size_t, hash> ht;
-      runtime::Stack<decltype(ht)::Entry> entries;
-      size_t count = 0;
-      //  cout << "+++++++++++++++++++++++++++++++++++" << endl;
-      for (size_t i = li.nrTuples - 1;; i--) {
-         entries.emplace_back(ht.hash(l_orderkey[i]), l_orderkey[i], i);
-         count++;
-         if (i == 0) break;
-      }
-      // cout << "count " << count << endl;
-      ht.setSize(count);
-      ht.insertAll(entries);
-
-      // iterate over orders table
-      size_t cnt = 0;
-      for (size_t i = 0; i < ord.nrTuples; i++) {
-         auto h = ht.hash(o_orderkey[i]);
-
-         auto entry =
-             reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
-
-         for (; entry != ht.end();
-              entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next)) {
-            if (entry->h.hash == h && entry->k == o_orderkey[i]) {
-#ifdef VERBOSE
-               cout << "*"
-                    << "\t" << i << "\t" << o_orderkey[i] << "\t" << entry->v
-                    << endl;
-#endif
-               indx_val.emplace_back(entry->v);
-               cnt++;
-            }
+         using hash = runtime::CRC32Hash;
+         Hashmapx<types::Integer, size_t, hash> ht;
+         runtime::Stack<decltype(ht)::Entry> entries;
+         size_t count = 0;
+         for (size_t i = ord.nrTuples - 1;; i--) {
+            entries.emplace_back(ht.hash(o_custkey[i]), o_custkey[i], i);
+            count++;
+            if (i == 0) break;
          }
-         indx.emplace_back(cnt);
+         ht.setSize(count);
+         ht.insertAll(entries);
+         // cout << "+++++++++++++++++++++++++++++++++++++" << endl;
+         // iterate over customer table
+         size_t cnt = 0;
+         for (size_t i = 0; i < cu.nrTuples; i++) {
+            auto h = ht.hash(c_custkey[i]);
+
+            auto entry =
+                reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
+
+            for (; entry != ht.end();
+                 entry = reinterpret_cast<decltype(ht)::Entry*>(entry->h.next))
+               if (entry->h.hash == h && entry->k == c_custkey[i]) {
+#ifdef VERBOSE
+                  cout << "*"
+                       << "\t" << i << "\t" << c_custkey[i] << "\t" << entry->v
+                       << endl;
+#endif
+                  indx_val.emplace_back(entry->v);
+                  cnt++;
+               }
+            indx.emplace_back(cnt);
+         }
       }
-      // cout << "cnt " << cnt << endl;
+
+      // build indexes
+      {
+         auto& indx = db.getindex("ord_li");
+         auto& indx_val = db.getindex("ord_li_vals");
+
+         auto& ord = db["orders"];
+         auto& li = db["lineitem"];
+
+         auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+         auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+
+         using hash = runtime::CRC32Hash;
+         Hashmapx<types::Integer, size_t, hash> ht;
+         runtime::Stack<decltype(ht)::Entry> entries;
+         size_t count = 0;
+         //  cout << "+++++++++++++++++++++++++++++++++++" << endl;
+         for (size_t i = li.nrTuples - 1;; i--) {
+            entries.emplace_back(ht.hash(l_orderkey[i]), l_orderkey[i], i);
+            count++;
+            if (i == 0) break;
+         }
+         // cout << "count " << count << endl;
+         ht.setSize(count);
+         ht.insertAll(entries);
+
+         // iterate over orders table
+         size_t cnt = 0;
+         for (size_t i = 0; i < ord.nrTuples; i++) {
+            auto h = ht.hash(o_orderkey[i]);
+
+            auto entry =
+                reinterpret_cast<decltype(ht)::Entry*>(ht.find_chain_tagged(h));
+
+            for (; entry != ht.end();
+                 entry =
+                     reinterpret_cast<decltype(ht)::Entry*>(entry->h.next)) {
+               if (entry->h.hash == h && entry->k == o_orderkey[i]) {
+#ifdef VERBOSE
+                  cout << "*"
+                       << "\t" << i << "\t" << o_orderkey[i] << "\t" << entry->v
+                       << endl;
+#endif
+                  indx_val.emplace_back(entry->v);
+                  cnt++;
+               }
+            }
+            indx.emplace_back(cnt);
+         }
+         // cout << "cnt " << cnt << endl;
+      }
+      auto end = gettime();
+
+      cerr << "Building index time " << (end - start) << endl;
    }
 #ifdef VERBOSE
    cout << "______________________________________________" << endl;

@@ -51,7 +51,7 @@ int main(int argc, char* argv[]) {
    // run queries
    auto repetitions = atoi(argv[1]);
    size_t nrThreads = std::thread::hardware_concurrency();
-   std::cout << "Nthread " << nrThreads << std::endl;
+   // std::cout << "Nthread " << nrThreads << std::endl;
    size_t vectorSize = 1024;
    bool clearCaches = false;
    if (argc > 3) nrThreads = atoi(argv[3]);
@@ -106,26 +106,78 @@ int main(int argc, char* argv[]) {
                        repetitions);
 #endif
 #if 1
-   if (q.count("3h"))
-      e.timeAndProfile("q3 hyper     ",
-                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+
+   if (q.count("5h"))
+      e.timeAndProfile("q5 hyper  (no sel)   ",
+                       nrTuples(tpch, {"supplier", "region", "nation",
+                                       "customer", "orders", "lineitem"}),
                        [&]() {
                           if (clearCaches) clearOsCaches();
-                          auto result = q3_hyper(tpch, nrThreads);
+                          auto result = q5_no_sel_hyper(tpch);
                           escape(&result);
                        },
                        repetitions);
-   if (q.count("3hi"))
-      e.timeAndProfile("q3 hyper index",
-                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+   /* if (q.count("5h"))
+       e.timeAndProfile("q5 hyper index (no sel)   ",
+                        nrTuples(tpch, {"supplier", "region", "nation",
+                                        "customer", "orders", "lineitem"}),
+                        [&]() {
+                           if (clearCaches) clearOsCaches();
+                           auto result = q5_no_sel_hyper_i(tpch, nrThreads);
+                           escape(&result);
+                        },
+                        repetitions);*/
+   if (q.count("5h"))
+      e.timeAndProfile("q5 hyper index (no sel)   ",
+                       nrTuples(tpch, {"supplier", "region", "nation",
+                                       "customer", "orders", "lineitem"}),
                        [&]() {
                           if (clearCaches) clearOsCaches();
-                          auto result = q3_hyper_index(tpch, nrThreads);
+                          auto result = q5_hyper_i1(tpch, nrThreads);
                           escape(&result);
                        },
                        repetitions);
+
+      /*if (q.count("3h"))
+         e.timeAndProfile("q3 hyper     ",
+                          nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                          [&]() {
+                             if (clearCaches) clearOsCaches();
+                             auto result = q3_hyper(tpch, nrThreads);
+                             escape(&result);
+                          },
+                          repetitions);
+      if (q.count("3hi"))
+         e.timeAndProfile("q3 hyper index",
+                          nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                          [&]() {
+                             if (clearCaches) clearOsCaches();
+                             auto result = q3_hyper_index(tpch, nrThreads);
+                             escape(&result);
+                          },
+                          repetitions);*/
 #endif
 #if 0
+
+if (q.count("3h"))
+   e.timeAndProfile("q3 hyper all   ",
+                    nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                    [&]() {
+                       if (clearCaches) clearOsCaches();
+                       auto result = q3_hyper_a(tpch, nrThreads);
+                       escape(&result);
+                    },
+                    repetitions);
+if (q.count("3hi"))
+   e.timeAndProfile("q3 hyper all index",
+                    nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                    [&]() {
+                       if (clearCaches) clearOsCaches();
+                       auto result = q3_hyper_ia(tpch, nrThreads);
+                       escape(&result);
+                    },
+                    repetitions);
+
    if (q.count("3v"))
       e.timeAndProfile(
           "q3 vectorwise", nrTuples(tpch, {"customer", "orders", "lineitem"}),

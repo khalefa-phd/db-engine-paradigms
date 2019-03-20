@@ -84,6 +84,11 @@ struct Q3Builder : private vectorwise::QueryBuilder {
    std::unique_ptr<Q3> getQuery();
 };
 
+std::unique_ptr<runtime::Query> q3_hyper_ia(runtime::Database& db,
+                                            size_t nrThreads);
+std::unique_ptr<runtime::Query> q3_hyper_a(runtime::Database& db,
+                                           size_t nrThreads);
+
 std::unique_ptr<runtime::Query>
 q3_hyper(runtime::Database& db,
          size_t nrThreads = std::thread::hardware_concurrency());
@@ -136,12 +141,16 @@ struct Q5Builder : private vectorwise::QueryBuilder {
 std::unique_ptr<runtime::Query>
 q5_hyper(runtime::Database& db,
          size_t nrThreads = std::thread::hardware_concurrency());
+std::unique_ptr<runtime::Query> q5_hyper_i1(runtime::Database& db,
+                                            size_t nrThreads);
+
 std::unique_ptr<runtime::Query>
 q5_vectorwise(runtime::Database& db,
               size_t nrThreads = std::thread::hardware_concurrency(),
               size_t vectorSize = 1024);
 
 runtime::Relation q5_no_sel_hyper(runtime::Database& db);
+runtime::Relation q5_no_sel_hyper_i(runtime::Database& db, size_t nrThreads);
 std::unique_ptr<runtime::BlockRelation>
 q5_no_sel_vectorwise(runtime::Database& db,
                      size_t nrThreads = std::thread::hardware_concurrency());

@@ -11,6 +11,7 @@
 #include "vectorwise/QueryBuilder.hpp"
 #include "vectorwise/VectorAllocator.hpp"
 #include <iostream>
+#include <unordered_map>
 
 using namespace runtime;
 using namespace std;
@@ -43,6 +44,175 @@ using vectorwise::primitives::hash_t;
 
 using namespace runtime;
 using namespace std;
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_i1(Database& db,
+                                                        size_t nrThreads) {
+
+   const size_t morselSize = 10000;
+
+   auto resources = initQuery(nrThreads);
+
+   // --- constants
+   auto c1 = types::Date::castString("1994-01-01");
+   auto c2 = types::Date::castString("1995-01-01");
+   string b = "ASIA";
+   auto c3 = types::Char<25>::castString(b.data(), b.size());
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+   const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+   auto& su = db["supplier"];
+   auto& re = db["region"];
+   auto& na = db["nation"];
+   auto& cu = db["customer"];
+   auto& ord = db["orders"];
+   auto& li = db["lineitem"];
+
+   // indexes
+   auto& indx = db.getindex("cust_ord");
+   auto& indx_val = db.getindex("cust_ord_vals");
+   auto& iord = db.getindex("ord_li");
+   auto& iord_val = db.getindex("ord_li_vals");
+
+   using hash = runtime::CRC32Hash;
+
+   auto r_name = re["r_name"].data<types::Char<25>>();
+   auto r_regionkey = re["r_regionkey"].data<types::Integer>();
+   // --- select region and build ht
+   Hashset<types::Integer, hash> ht1;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+       entries1;
+   auto found1 = PARALLEL_SELECT(re.nrTuples, entries1, {
+      if (r_name[i] == c3) {
+         entries.emplace_back(ht1.hash(r_regionkey[i]), r_regionkey[i]);
+         found++;
+      }
+   });
+   ht1.setSize(found1);
+   parallel_insert(entries1, ht1);
+   // ht1 = r_regionkey
+
+   // --- join on region and build ht
+   auto n_regionkey = na["n_regionkey"].data<types::Integer>();
+   auto n_nationkey = na["n_nationkey"].data<types::Integer>();
+   auto n_name = na["n_name"].data<types::Char<25>>();
+   Hashmapx<types::Integer, types::Char<25>, hash> ht2;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+       entries2;
+   auto found2 = PARALLEL_SELECT(na.nrTuples, entries2, {
+      if (ht1.contains(n_regionkey[i])) {
+         entries.emplace_back(ht2.hash(n_nationkey[i]), n_nationkey[i],
+                              n_name[i]);
+         found++;
+      }
+   });
+   ht2.setSize(found2);
+   parallel_insert(entries2, ht2);
+   // ht2 nationkey that are in Asia
+   // todo:  push the selection with nations in ht2
+   // --- build ht for supplier
+   auto s_suppkey = su["s_suppkey"].data<types::Integer>();
+   auto s_nationkey = su["s_nationkey"].data<types::Integer>();
+   Hashset<std::tuple<types::Integer, types::Integer>, hash> ht5;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht5)::Entry>>
+       entries5;
+
+   PARALLEL_SCAN(su.nrTuples, entries5, {
+      auto key = make_tuple(s_suppkey[i], s_nationkey[i]);
+      entries.emplace_back(ht5.hash(key), key);
+   });
+
+   ht5.setSize(su.nrTuples);
+   parallel_insert(entries5, ht5);
+
+   // now we can proceed, for each customer with nationkey in ht2
+   // get its order within dates
+   // and for each
+   // --- join on nation and build ht
+   auto c_nationkey = cu["c_nationkey"].data<types::Integer>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto& l_suppkey = li["l_suppkey"].typedAccess<types::Integer>();
+   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+
+   tbb::enumerable_thread_specific<
+       std::unordered_map<int32_t, types::Numeric<12, 4>>>
+       entries3;
+
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
+       [&](const tbb::blocked_range<size_t>& r) {
+          auto& entries = entries3.local();
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+
+             // check if c_nation in hash table ht2
+             if (ht2.findOne(c_nationkey[i]) == nullptr) continue;
+             size_t b = (i > 0) ? indx[i - 1] : 0;
+             size_t e = indx[i];
+
+             for (size_t j = b; j < e; j++) {
+                size_t order_id = indx_val[j];
+                if (!((o_orderdate[order_id] < c2) &
+                      (o_orderdate[order_id] >= c1)))
+                   continue;
+                {
+                   size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+                   size_t order_end = iord[order_id];
+
+                   for (size_t k = order_begin; k < order_end; k++) {
+                      auto li_id = iord_val[k];
+                      auto key = make_tuple(l_suppkey[li_id], c_nationkey[i]);
+                      if (ht5.contains(key)) {
+                         entries[(int32_t)ht2.hash(c_nationkey[i])] +=
+                             (l_extendedprice[li_id] *
+                              (one - l_discount[li_id]));
+                      }
+
+                   } // iterate oevr line item
+                }
+
+             } // iterate over order
+          }
+       } // customer
+   );
+   auto groupOp = make_GroupBy<types::Char<25>, types::Numeric<12, 4>, hash>(
+       [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+   // preaggregation
+
+   tbb::parallel_for(entries3.range(), [&](const auto& r) {
+      auto groupLocals = groupOp.preAggLocals();
+
+      for (auto& entries : r) {
+         for (auto& x : entries) {
+            auto v = ht2.findOne((x.first));
+            if (v) { groupLocals.consume(*v, x.second); }
+         }
+      }
+   });
+
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto nameAttr = result->addAttribute("n_name", sizeof(types::Char<25>));
+
+   groupOp.forallGroups([&](auto& groups) {
+      // write aggregates to result
+      auto block = result->createBlock(groups.size());
+      auto name = reinterpret_cast<types::Char<25>*>(block.data(nameAttr));
+      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+      for (auto block : groups)
+         for (auto& group : block) {
+            *name++ = group.k;
+            *rev++ = group.v;
+         }
+      block.addedElements(groups.size());
+   });
+
+   leaveQuery(nrThreads);
+   return move(resources.query);
+}
+
 NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper(Database& db,
                                                      size_t nrThreads) {
 
@@ -228,8 +398,7 @@ unique_ptr<Q5Builder::Q5> Q5Builder::getQuery() {
        .addBuildKey(Column(nation, "n_nationkey"), Buffer(join_reg_nat),
                     conf.hash_sel_int32_t_col(),
                     primitives::scatter_sel_int32_t_col)
-       .addProbeKey(Column(customer, "c_nationkey"),
-                    conf.hash_int32_t_col(),
+       .addProbeKey(Column(customer, "c_nationkey"), conf.hash_int32_t_col(),
                     primitives::keys_equal_int32_t_col)
        .addBuildValue(Column(nation, "n_name"), Buffer(join_reg_nat),
                       primitives::scatter_sel_Char_25_col,
@@ -264,8 +433,7 @@ unique_ptr<Q5Builder::Q5> Q5Builder::getQuery() {
        .addBuildKey(Column(orders, "o_orderkey"), Buffer(join_ord),
                     conf.hash_sel_int32_t_col(),
                     primitives::scatter_sel_int32_t_col)
-       .addProbeKey(Column(lineitem, "l_orderkey"),
-                    conf.hash_int32_t_col(),
+       .addProbeKey(Column(lineitem, "l_orderkey"), conf.hash_int32_t_col(),
                     primitives::keys_equal_int32_t_col)
        .addBuildValue(Buffer(join_ord_nationkey),
                       primitives::scatter_int32_t_col,
@@ -275,13 +443,11 @@ unique_ptr<Q5Builder::Q5> Q5Builder::getQuery() {
                       Buffer(n_name, sizeof(Char_25)),
                       primitives::gather_col_Char_25_col);
    HashJoin(Buffer(join_supp, sizeof(pos_t)), conf.joinAll())
-       .addBuildKey(Column(supplier, "s_nationkey"),
-                     conf.hash_int32_t_col(),
+       .addBuildKey(Column(supplier, "s_nationkey"), conf.hash_int32_t_col(),
                     primitives::scatter_int32_t_col)
-       .addBuildKey(Column(supplier, "s_suppkey"),
-                    conf.rehash_int32_t_col(),
+       .addBuildKey(Column(supplier, "s_suppkey"), conf.rehash_int32_t_col(),
                     primitives::scatter_int32_t_col)
-       .addProbeKey(Buffer(join_line_nationkey),  conf.hash_int32_t_col(),
+       .addProbeKey(Buffer(join_line_nationkey), conf.hash_int32_t_col(),
                     primitives::keys_equal_int32_t_col)
        .pushProbeSelVector(Buffer(join_line),
                            Buffer(join_supp_line, sizeof(pos_t)))

@@ -1,6 +1,8 @@
 #include "benchmarks/tpch/Queries.hpp"
 #include "common/runtime/Hash.hpp"
 #include "common/runtime/Types.hpp"
+#include "hyper/ParallelHelper.hpp"
+
 #include "vectorwise/Operations.hpp"
 #include "vectorwise/Operators.hpp"
 #include "vectorwise/Primitives.hpp"
@@ -35,6 +37,97 @@ using vectorwise::primitives::hash_t;
 
 using namespace runtime;
 using namespace std;
+
+NOVECTORIZE Relation q5_no_sel_hyper_i(Database& db, size_t nrThreads) {
+   // build hash table on supplier and cusotmer
+
+   // auto resources = initQuery(nrThreads);
+   // --- constants
+   auto& su = db["supplier"];
+   auto& cu = db["customer"];
+   auto& ord = db["orders"];
+   auto& li = db["lineitem"];
+   // indexes
+   auto& indx = db.getindex("cust_ord");
+   auto& indx_val = db.getindex("cust_ord_vals");
+   auto& iord = db.getindex("ord_li");
+   auto& iord_val = db.getindex("ord_li_vals");
+
+   auto& c_nationkey = cu["c_nationkey"].typedAccess<types::Integer>();
+   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto& l_suppkey = li["l_suppkey"].typedAccess<types::Integer>();
+
+   using hash = runtime::CRC32Hash;
+   using range = tbb::blocked_range<size_t>;
+
+   const size_t morselSize = 100;
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+
+   auto& s_suppkey = su["s_suppkey"].typedAccess<types::Integer>();
+   auto& s_nationkey = su["s_nationkey"].typedAccess<types::Integer>();
+   Hashset<std::tuple<types::Integer, types::Integer>, hash> ht5;
+   deque<decltype(ht5)::Entry> entries5;
+   for (size_t i = 0; i < su.nrTuples; ++i) {
+      auto key = make_tuple(s_suppkey[i], s_nationkey[i]);
+      entries5.emplace_back(ht5.hash(key), key);
+   }
+   ht5.setSize(entries5.size());
+   ht5.insertAll(entries5);
+
+   const auto add = [](const pair<types::Numeric<12, 4>, int64_t>& a,
+                       const pair<types::Numeric<12, 4>, int64_t>& b) {
+      return make_pair(a.first + b.first, a.second + b.second);
+   };
+   auto init = make_pair((types::Numeric<12, 4>)0, (int64_t)0);
+   auto aggegrated = tbb::parallel_reduce(
+       range(0, cu.nrTuples, morselSize), init,
+       [&](const tbb::blocked_range<size_t>& r, const decltype(init)& f) {
+          types::Numeric<12, 4> agg = 0;
+          int64_t cnt = 0;
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+             auto c_nation = c_nationkey[i];
+             size_t b = (i > 0) ? indx[i - 1] : 0;
+             size_t e = indx[i];
+
+             for (size_t j = b; j < e; j++) {
+                size_t order_id = indx_val[j];
+
+                size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+                size_t order_end = iord[order_id];
+
+                for (size_t k = order_begin; k < order_end; k++) {
+                   auto li_id = iord_val[k];
+                   auto key = make_tuple(l_suppkey[li_id], c_nation);
+                   if (ht5.contains(key)) {
+                      agg +=
+                          (l_extendedprice[li_id] * (one - l_discount[li_id]));
+                      cnt++;
+                   }
+                }
+             }
+          }
+          return make_pair(agg, cnt);
+       },
+       add);
+   leaveQuery(nrThreads);
+   // --- output
+   Relation result;
+   result.insert("revenue", make_unique<algebra::Numeric>(12, 4));
+   result.insert("count", make_unique<algebra::BigInt>());
+   auto& rev = result["revenue"].typedAccessForChange<types::Numeric<12, 4>>();
+   rev.reset(1);
+   rev.push_back(aggegrated.first);
+   auto& ct = result["count"].typedAccessForChange<int64_t>();
+   ct.reset(1);
+   ct.push_back(aggegrated.second);
+   result.nrTuples = 1;
+   cout << aggegrated.first << " " << aggegrated.second << endl;
+   return result;
+}
+
 NOVECTORIZE Relation q5_no_sel_hyper(Database& db) {
 
    // --- aggregates
@@ -135,6 +228,7 @@ NOVECTORIZE Relation q5_no_sel_hyper(Database& db) {
    ct.reset(1);
    ct.push_back(count);
    result.nrTuples = 1;
+   cout << revenue << " " << count << endl;
    return result;
 }
 
@@ -151,6 +245,7 @@ unique_ptr<Q5Builder::Q5> Q5Builder::getNoSelQuery() {
                     primitives::scatter_int32_t_col)
        .addProbeKey(Column(nation, "n_regionkey"), primitives::hash_int32_t_col,
                     primitives::keys_equal_int32_t_col);
+
    auto customer = Scan("customer");
    HashJoin(Buffer(join_cust, sizeof(pos_t)))
        .addBuildKey(Column(nation, "n_nationkey"), primitives::hash_int32_t_col,
