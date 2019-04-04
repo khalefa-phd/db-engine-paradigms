@@ -271,26 +271,47 @@ void PerfEvents::timeAndProfile(std::string s, uint64_t count,
                                 std::function<void()> fn, uint64_t repetitions,
                                 bool mem) {
    using namespace std;
+   // vector<double> wtimes;
+   // vector<double> times;
    // warmup round
    double warumupStart = gettime();
-   while (gettime() - warumupStart < 0.15) fn();
+   while (gettime() - warumupStart < 0.15) {
+      fn();
+      //  wtimes.push_back(gettime());
+   }
 
    uint64_t memStart = 0;
    if (mem) memStart = getCurrentRSS();
    startAll();
    double start = gettime();
    size_t performedRep = 0;
+
+   // times.push_back(gettime());
    for (; performedRep < repetitions || gettime() - start < 0.5;
         ++performedRep) {
       fn();
+      // times.push_back(gettime());
    }
    double end = gettime();
    readAll();
    std::cout.precision(3);
    std::cout.setf(std::ios::fixed, std::ios::floatfield);
+#if 0
+   cout << "wtimes" << endl;
+   for (int i = 1; i < wtimes.size(); i++) {
+      cout << (wtimes[i] - wtimes[i - 1]) * 1000 * 1000 << endl;
+   }
+
+   cout << "times" << endl;
+   for (int i = 1; i < times.size(); i++) {
+      cout << (times[i] - times[i - 1]) * 1000 * 1000 << "  micro second"
+           << endl;
+   }
+   cout << performedRep << endl;
+#endif
    if (writeHeader) {
       std::cout << setw(20) << "name"
-                << "," << setw(printFieldWidth) << " time"
+                << "," << setw(printFieldWidth) << " time(ms)"
                 << "," << setw(printFieldWidth) << " CPUs"
                 << "," << setw(printFieldWidth) << " IPC"
                 << "," << setw(printFieldWidth) << " GHz"

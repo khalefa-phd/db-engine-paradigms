@@ -84,6 +84,8 @@ struct Q3Builder : private vectorwise::QueryBuilder {
    std::unique_ptr<Q3> getQuery();
 };
 
+std::unique_ptr<runtime::Query> q3_hyper_index2(runtime::Database& db,
+                                                size_t nrThreads);
 std::unique_ptr<runtime::Query> q3_hyper_ia(runtime::Database& db,
                                             size_t nrThreads);
 std::unique_ptr<runtime::Query> q3_hyper_a(runtime::Database& db,
@@ -138,11 +140,21 @@ struct Q5Builder : private vectorwise::QueryBuilder {
    std::unique_ptr<Q5> getNoSelQuery();
 };
 
+std::unique_ptr<runtime::Query> q5_hyper_all_i(runtime::Database& db,
+                                               size_t nrThreads);
+std::unique_ptr<runtime::Query> q5_hyper_all(runtime::Database& db,
+                                             size_t nrThreads);
+
 std::unique_ptr<runtime::Query>
 q5_hyper(runtime::Database& db,
          size_t nrThreads = std::thread::hardware_concurrency());
 std::unique_ptr<runtime::Query> q5_hyper_i1(runtime::Database& db,
                                             size_t nrThreads);
+
+std::unique_ptr<runtime::Query> q5_hyper_asia(runtime::Database& db,
+                                              size_t nrThreads);
+std::unique_ptr<runtime::Query> q5_hyper_asia_i(runtime::Database& db,
+                                                size_t nrThreads);
 
 std::unique_ptr<runtime::Query>
 q5_vectorwise(runtime::Database& db,

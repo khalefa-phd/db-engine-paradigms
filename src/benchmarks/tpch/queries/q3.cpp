@@ -10,7 +10,7 @@
 #include "vectorwise/QueryBuilder.hpp"
 #include "vectorwise/VectorAllocator.hpp"
 #include <iostream>
-
+#include <map>
 using namespace runtime;
 using namespace std;
 using vectorwise::primitives::Char_10;
@@ -45,6 +45,166 @@ using vectorwise::primitives::hash_t;
 // Output is displayed
 //#define VERBOSE_OUTPUT
 
+template <class InputIterT1, class InputIterT2, class OutputIterT,
+          class Comparator, class Func>
+OutputIterT merge_apply(InputIterT1 first1, InputIterT1 last1,
+                        InputIterT2 first2, InputIterT2 last2,
+                        OutputIterT result, Comparator comp, Func func) {
+   while (true) {
+      if (first1 == last1) return std::copy(first2, last2, result);
+      if (first2 == last2) return std::copy(first1, last1, result);
+
+      if (comp(*first1, *first2) < 0) {
+         *result = *first1;
+         ++first1;
+      } else if (comp(*first1, *first2) > 0) {
+         *result = *first2;
+         ++first2;
+      } else {
+         *result = func(*first1, *first2);
+         ++first1;
+         ++first2;
+      }
+      ++result;
+   }
+}
+
+template <class T> int compare_first(T a, T b) { return a.first - b.first; }
+
+NOVECTORIZE std::unique_ptr<runtime::Query>
+q3_hyper_index2(runtime::Database& db, size_t nrThreads) {
+#ifdef VERBOSE_I
+   cout << "hi from q3_hyper index 2" << endl;
+#endif
+   // --- aggregates
+   auto resources = initQuery(nrThreads);
+   // --- constants
+   auto c1 = types::Date::castString("1995-03-15");
+   auto c2 = types::Date::castString("1995-03-15");
+   string b = "BUILDING";
+   auto c3 = types::Char<10>::castString(b.data(), b.size());
+
+   auto& cu = db["customer"];
+   auto& ord = db["orders"];
+   auto& li = db["lineitem"];
+   // indexes
+   auto& icust = db.getindex("customer_key");
+   auto& iord = db.getindex("orders_key");
+
+   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+   auto l_shipdate = li["l_shipdate"].data<types::Date>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+   auto o_custkey = ord["o_custkey"].data<types::Integer>();
+   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+
+   const size_t morselSize = 1000;
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+
+   tbb::enumerable_thread_specific<
+       std::map<types::Integer,
+                std::tuple<types::Date, types::Integer, types::Numeric<12, 4>>>>
+       entries1;
+
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+       [&](const tbb::blocked_range<size_t>& r) {
+          auto& entries = entries1.local();
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+             if (l_shipdate[i] > c2) {
+                // get the order
+                size_t order_indx = iord[l_orderkey[i].value];
+                if (o_orderdate[order_indx] < c1) {
+                   // get the customer
+                   size_t cust_indx = icust[o_custkey[order_indx].value];
+                   if (c_mktsegment[i] == c3) {
+                      entries[order_indx] = make_tuple(
+                          o_orderdate[order_indx], o_shippriority[order_indx],
+                          std::get<2>(entries[order_indx]));
+                   }
+                }
+             }
+          }
+       });
+
+   // we need to combine the hashtables from all threads
+   // Reduction from tbb
+   // https://software.intel.com/en-us/node/506117
+   //  destructively use the partial results to generate the final result.
+   using myval = std::tuple<types::Date, types::Integer, types::Numeric<12, 4>>;
+   std::map<types::Integer, myval> sum =
+       entries1.combine([](std::map<types::Integer, myval> a,
+                           std::map<types::Integer, myval> b) {
+          map<types::Integer, myval> c;
+          merge_apply(
+              a.begin(), a.end(), b.begin(), b.end(), inserter(c, c.begin()),
+              [](pair<types::Integer, myval> a, pair<types::Integer, myval> b) {
+                 return a.first.value - b.first.value;
+              },
+              [](pair<types::Integer, myval> a, pair<types::Integer, myval> b) {
+                 auto s = get<2>(a.second) + get<2>(b.second);
+                 return make_pair(a.first, make_tuple(get<0>(a.second),
+                                                      get<1>(a.second), s));
+              });
+          return c;
+       });
+
+   vector<std::tuple<types::Integer, types::Date, types::Integer,
+                     types::Numeric<12, 4>>>
+       tuples;
+
+   for (auto e : sum) {
+      tuples.push_back(make_tuple(e.first, get<0>(e.second), get<1>(e.second),
+                                  get<2>(e.second)));
+   }
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+   auto prioAttr =
+       result->addAttribute("o_shippriority", sizeof(types::Integer));
+   // write aggregates to result
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, tuples.size(), morselSize / 10),
+       [&](const tbb::blocked_range<size_t>& r) {
+          // auto n = r.end() - r.begin();
+          //{
+          // mutex _m;
+          // unique_lock<mutex> lock(_m);
+
+          // cout << r.begin() << " " << r.end() << "\n";
+          //}
+          auto n = r.end() - r.begin();
+          auto block = result->createBlock(n);
+          auto rev =
+              reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+          auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
+          auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
+          auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
+
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+             auto entry = tuples[i];
+             *order++ = get<0>(entry);
+             *date++ = get<1>(entry);
+             *prio++ = get<2>(entry);
+             *rev++ = get<3>(entry);
+          }
+          block.addedElements(n);
+       });
+
+   leaveQuery(nrThreads);
+#ifdef VERBOSE_I
+   cout << "q3_hyper index" << endl;
+#endif
+
+   return move(resources.query);
+}
+
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_ia(runtime::Database& db,
                                                         size_t nrThreads) {
 #ifdef VERBOSE_I
@@ -68,7 +228,6 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_ia(runtime::Database& db,
    auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
    auto o_orderdate = ord["o_orderdate"].data<types::Date>();
    auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-   auto l_shipdate = li["l_shipdate"].data<types::Date>();
    auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
    auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
    auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
@@ -189,7 +348,7 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_ia(runtime::Database& db,
 
    return move(resources.query);
 }
-
+// all
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_a(Database& db,
                                                        size_t nrThreads) {
 
@@ -216,9 +375,8 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_a(Database& db,
    auto o_orderdate = ord["o_orderdate"].data<types::Date>();
    auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
    auto l_orderkey = li["l_orderkey"].data<types::Integer>();
-   auto l_shipdate = li["l_shipdate"].data<types::Date>();
-   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
    auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
 
    using hash = runtime::CRC32Hash;
    using range = tbb::blocked_range<size_t>;

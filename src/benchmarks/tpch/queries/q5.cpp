@@ -135,7 +135,7 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_i1(Database& db,
    auto o_orderdate = ord["o_orderdate"].data<types::Date>();
 
    tbb::enumerable_thread_specific<
-       std::unordered_map<int32_t, types::Numeric<12, 4>>>
+       std::unordered_map<int, types::Numeric<12, 4>>>
        entries3;
 
    tbb::parallel_for(
@@ -162,7 +162,7 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_i1(Database& db,
                       auto li_id = iord_val[k];
                       auto key = make_tuple(l_suppkey[li_id], c_nationkey[i]);
                       if (ht5.contains(key)) {
-                         entries[(int32_t)ht2.hash(c_nationkey[i])] +=
+                         entries[(int)c_nationkey[i].value] +=
                              (l_extendedprice[li_id] *
                               (one - l_discount[li_id]));
                       }
@@ -172,6 +172,10 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_i1(Database& db,
 
              } // iterate over order
           }
+          // print sub aggregates
+          // for (auto e : entries) {
+          // cout << "\t" << e.first << "\t" << e.second << endl;
+          //}
        } // customer
    );
    auto groupOp = make_GroupBy<types::Char<25>, types::Numeric<12, 4>, hash>(
@@ -185,7 +189,11 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_i1(Database& db,
       for (auto& entries : r) {
          for (auto& x : entries) {
             auto v = ht2.findOne((x.first));
-            if (v) { groupLocals.consume(*v, x.second); }
+            if (v) {
+               groupLocals.consume(*v, x.second);
+               //   cout << x.first << "\t " << (*v) << "\t " << x.second <<
+               //   endl;
+            }
          }
       }
    });
@@ -205,6 +213,7 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_i1(Database& db,
          for (auto& group : block) {
             *name++ = group.k;
             *rev++ = group.v;
+            // cout << "\t" << group.k << "\t" << group.v << endl;
          }
       block.addedElements(groups.size());
    });
@@ -366,6 +375,655 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper(Database& db,
          for (auto& group : block) {
             *name++ = group.k;
             *rev++ = group.v;
+            // cout << "q5\t" << group.k << "\t" << group.v << endl;
+         }
+      block.addedElements(groups.size());
+   });
+
+   leaveQuery(nrThreads);
+   return move(resources.query);
+}
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_asia_i(Database& db,
+                                                            size_t nrThreads) {
+
+   const size_t morselSize = 10000;
+
+   auto resources = initQuery(nrThreads);
+
+   // --- constants
+   // auto c1 = types::Date::castString("1994-01-01");
+   // auto c2 = types::Date::castString("1995-01-01");
+   string b = "ASIA";
+   auto c3 = types::Char<25>::castString(b.data(), b.size());
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+   const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+   auto& su = db["supplier"];
+   auto& re = db["region"];
+   auto& na = db["nation"];
+   auto& cu = db["customer"];
+   auto& li = db["lineitem"];
+
+   // indexes
+   auto& indx = db.getindex("cust_ord");
+   auto& indx_val = db.getindex("cust_ord_vals");
+   auto& iord = db.getindex("ord_li");
+   auto& iord_val = db.getindex("ord_li_vals");
+
+   using hash = runtime::CRC32Hash;
+
+   auto r_name = re["r_name"].data<types::Char<25>>();
+   auto r_regionkey = re["r_regionkey"].data<types::Integer>();
+   // --- select region and build ht
+   Hashset<types::Integer, hash> ht1;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+       entries1;
+   auto found1 = PARALLEL_SELECT(re.nrTuples, entries1, {
+      if (r_name[i] == c3) {
+         entries.emplace_back(ht1.hash(r_regionkey[i]), r_regionkey[i]);
+         found++;
+      }
+   });
+   ht1.setSize(found1);
+   parallel_insert(entries1, ht1);
+   // ht1 = r_regionkey
+
+   // --- join on region and build ht
+   auto n_regionkey = na["n_regionkey"].data<types::Integer>();
+   auto n_nationkey = na["n_nationkey"].data<types::Integer>();
+   auto n_name = na["n_name"].data<types::Char<25>>();
+   Hashmapx<types::Integer, types::Char<25>, hash> ht2;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+       entries2;
+   auto found2 = PARALLEL_SELECT(na.nrTuples, entries2, {
+      if (ht1.contains(n_regionkey[i])) {
+         entries.emplace_back(ht2.hash(n_nationkey[i]), n_nationkey[i],
+                              n_name[i]);
+         found++;
+      }
+   });
+   ht2.setSize(found2);
+   parallel_insert(entries2, ht2);
+   // ht2 nationkey that are in Asia
+   // todo:  push the selection with nations in ht2
+   // --- build ht for supplier
+   auto s_suppkey = su["s_suppkey"].data<types::Integer>();
+   auto s_nationkey = su["s_nationkey"].data<types::Integer>();
+   Hashset<std::tuple<types::Integer, types::Integer>, hash> ht5;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht5)::Entry>>
+       entries5;
+
+   PARALLEL_SCAN(su.nrTuples, entries5, {
+      auto key = make_tuple(s_suppkey[i], s_nationkey[i]);
+      entries.emplace_back(ht5.hash(key), key);
+   });
+
+   ht5.setSize(su.nrTuples);
+   parallel_insert(entries5, ht5);
+
+   // now we can proceed, for each customer with nationkey in ht2
+   // get its order within dates
+   // and for each
+   // --- join on nation and build ht
+   auto c_nationkey = cu["c_nationkey"].data<types::Integer>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto& l_suppkey = li["l_suppkey"].typedAccess<types::Integer>();
+
+   tbb::enumerable_thread_specific<
+       std::unordered_map<int, types::Numeric<12, 4>>>
+       entries3;
+
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
+       [&](const tbb::blocked_range<size_t>& r) {
+          auto& entries = entries3.local();
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+
+             // check if c_nation in hash table ht2
+             if (ht2.findOne(c_nationkey[i]) == nullptr) continue;
+             size_t b = (i > 0) ? indx[i - 1] : 0;
+             size_t e = indx[i];
+
+             for (size_t j = b; j < e; j++) {
+                size_t order_id = indx_val[j];
+                {
+                   size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+                   size_t order_end = iord[order_id];
+
+                   for (size_t k = order_begin; k < order_end; k++) {
+                      auto li_id = iord_val[k];
+                      auto key = make_tuple(l_suppkey[li_id], c_nationkey[i]);
+                      if (ht5.contains(key)) {
+                         entries[(int)c_nationkey[i].value] +=
+                             (l_extendedprice[li_id] *
+                              (one - l_discount[li_id]));
+                      }
+
+                   } // iterate oevr line item
+                }
+
+             } // iterate over order
+          }
+          // print sub aggregates
+          // for (auto e : entries) {
+          // cout << "\t" << e.first << "\t" << e.second << endl;
+          //}
+       } // customer
+   );
+   auto groupOp = make_GroupBy<types::Char<25>, types::Numeric<12, 4>, hash>(
+       [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+   // preaggregation
+
+   tbb::parallel_for(entries3.range(), [&](const auto& r) {
+      auto groupLocals = groupOp.preAggLocals();
+
+      for (auto& entries : r) {
+         for (auto& x : entries) {
+            auto v = ht2.findOne((x.first));
+            if (v) {
+               groupLocals.consume(*v, x.second);
+               //   cout << x.first << "\t " << (*v) << "\t " << x.second <<
+               //   endl;
+            }
+         }
+      }
+   });
+
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto nameAttr = result->addAttribute("n_name", sizeof(types::Char<25>));
+
+   groupOp.forallGroups([&](auto& groups) {
+      // write aggregates to result
+      auto block = result->createBlock(groups.size());
+      auto name = reinterpret_cast<types::Char<25>*>(block.data(nameAttr));
+      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+      for (auto block : groups)
+         for (auto& group : block) {
+            *name++ = group.k;
+            *rev++ = group.v;
+            // cout << "\t" << group.k << "\t" << group.v << endl;
+         }
+      block.addedElements(groups.size());
+   });
+
+   leaveQuery(nrThreads);
+   return move(resources.query);
+}
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_asia(Database& db,
+                                                          size_t nrThreads) {
+
+   const size_t morselSize = 10000;
+
+   auto resources = initQuery(nrThreads);
+
+   // --- constants
+   // auto c1 = types::Date::castString("1994-01-01");
+   // auto c2 = types::Date::castString("1995-01-01");
+   string b = "ASIA";
+   auto c3 = types::Char<25>::castString(b.data(), b.size());
+
+   auto& su = db["supplier"];
+   auto& re = db["region"];
+   auto& na = db["nation"];
+   auto& cu = db["customer"];
+   auto& ord = db["orders"];
+   auto& li = db["lineitem"];
+
+   using hash = runtime::CRC32Hash;
+
+   auto r_name = re["r_name"].data<types::Char<25>>();
+   auto r_regionkey = re["r_regionkey"].data<types::Integer>();
+   // --- select region and build ht
+   Hashset<types::Integer, hash> ht1;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+       entries1;
+   auto found1 = PARALLEL_SELECT(re.nrTuples, entries1, {
+      if (r_name[i] == c3) {
+         entries.emplace_back(ht1.hash(r_regionkey[i]), r_regionkey[i]);
+         found++;
+      }
+   });
+   ht1.setSize(found1);
+   parallel_insert(entries1, ht1);
+
+   // --- join on region and build ht
+   auto n_regionkey = na["n_regionkey"].data<types::Integer>();
+   auto n_nationkey = na["n_nationkey"].data<types::Integer>();
+   auto n_name = na["n_name"].data<types::Char<25>>();
+   Hashmapx<types::Integer, types::Char<25>, hash> ht2;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+       entries2;
+   auto found2 = PARALLEL_SELECT(na.nrTuples, entries2, {
+      if (ht1.contains(n_regionkey[i])) {
+         entries.emplace_back(ht2.hash(n_nationkey[i]), n_nationkey[i],
+                              n_name[i]);
+         found++;
+      }
+   });
+   ht2.setSize(found2);
+   parallel_insert(entries2, ht2);
+
+   // --- join on nation and build ht
+   auto c_nationkey = cu["c_nationkey"].data<types::Integer>();
+   auto c_custkey = cu["c_custkey"].data<types::Integer>();
+   Hashmapx<types::Integer, std::tuple<types::Integer, types::Char<25>>, hash>
+       ht3;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht3)::Entry>>
+       entries3;
+
+   auto found3 = PARALLEL_SELECT(cu.nrTuples, entries3, {
+      decltype(ht2)::value_type* v;
+      if ((v = ht2.findOne(c_nationkey[i]))) {
+         entries.emplace_back(ht3.hash(c_custkey[i]), c_custkey[i],
+                              make_tuple(c_nationkey[i], *v));
+         found++;
+      }
+   });
+   ht3.setSize(found3);
+   parallel_insert(entries3, ht3);
+
+   // --- join on customer and build ht
+   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+   auto o_custkey = ord["o_custkey"].data<types::Integer>();
+   Hashmapx<types::Integer, std::tuple<types::Integer, types::Char<25>>, hash>
+       ht4;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht4)::Entry>>
+       entries4;
+
+   auto found4 = PARALLEL_SELECT(ord.nrTuples, entries4, {
+      decltype(ht3)::value_type* v;
+      if ((v = ht3.findOne(o_custkey[i]))) {
+         entries.emplace_back(ht4.hash(o_orderkey[i]), o_orderkey[i], *v);
+         found++;
+      }
+   });
+   ht4.setSize(found4);
+   parallel_insert(entries4, ht4);
+
+   // --- build ht for supplier
+   auto s_suppkey = su["s_suppkey"].data<types::Integer>();
+   auto s_nationkey = su["s_nationkey"].data<types::Integer>();
+   Hashset<std::tuple<types::Integer, types::Integer>, hash> ht5;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht5)::Entry>>
+       entries5;
+
+   PARALLEL_SCAN(su.nrTuples, entries5, {
+      auto key = make_tuple(s_suppkey[i], s_nationkey[i]);
+      entries.emplace_back(ht5.hash(key), key);
+   });
+
+   ht5.setSize(su.nrTuples);
+   parallel_insert(entries5, ht5);
+
+   // --- join on customer and build ht
+   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+   auto l_suppkey = li["l_suppkey"].data<types::Integer>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+   const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+   auto groupOp = make_GroupBy<types::Char<25>, types::Numeric<12, 4>, hash>(
+       [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+   // preaggregation
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+       [&](const tbb::blocked_range<size_t>& r) {
+          auto groupLocals = groupOp.preAggLocals();
+
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+             auto v = ht4.findOne(l_orderkey[i]);
+             if (v) {
+                auto suppkey = make_tuple(l_suppkey[i], get<0>(*v));
+                if (ht5.contains(suppkey)) {
+                   groupLocals.consume(get<1>(*v), l_extendedprice[i] *
+                                                       (one - l_discount[i]));
+                }
+             }
+          }
+       });
+
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto nameAttr = result->addAttribute("n_name", sizeof(types::Char<25>));
+
+   groupOp.forallGroups([&](auto& groups) {
+      // write aggregates to result
+      auto block = result->createBlock(groups.size());
+      auto name = reinterpret_cast<types::Char<25>*>(block.data(nameAttr));
+      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+      for (auto block : groups)
+         for (auto& group : block) {
+            *name++ = group.k;
+            *rev++ = group.v;
+            // cout << "q5\t" << group.k << "\t" << group.v << endl;
+         }
+      block.addedElements(groups.size());
+   });
+
+   leaveQuery(nrThreads);
+   return move(resources.query);
+}
+
+NOVECTORIZE std::unique_ptr<runtime::Query>
+q5_hyper_all_i(runtime::Database& db, size_t nrThreads) {
+
+   const size_t morselSize = 10000;
+
+   auto resources = initQuery(nrThreads);
+
+   // --- constants
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+   const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+   auto& su = db["supplier"];
+   auto& re = db["region"];
+   auto& na = db["nation"];
+   auto& cu = db["customer"];
+   auto& li = db["lineitem"];
+
+   // indexes
+   auto& indx = db.getindex("cust_ord");
+   auto& indx_val = db.getindex("cust_ord_vals");
+   auto& iord = db.getindex("ord_li");
+   auto& iord_val = db.getindex("ord_li_vals");
+
+   using hash = runtime::CRC32Hash;
+
+   auto r_regionkey = re["r_regionkey"].data<types::Integer>();
+   // --- select region and build ht
+   Hashset<types::Integer, hash> ht1;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+       entries1;
+   auto found1 = PARALLEL_SELECT(re.nrTuples, entries1, {
+      entries.emplace_back(ht1.hash(r_regionkey[i]), r_regionkey[i]);
+      found++;
+   });
+   ht1.setSize(found1);
+   parallel_insert(entries1, ht1);
+   // ht1 = r_regionkey
+
+   // --- join on region and build ht
+   auto n_regionkey = na["n_regionkey"].data<types::Integer>();
+   auto n_nationkey = na["n_nationkey"].data<types::Integer>();
+   auto n_name = na["n_name"].data<types::Char<25>>();
+   Hashmapx<types::Integer, types::Char<25>, hash> ht2;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+       entries2;
+   auto found2 = PARALLEL_SELECT(na.nrTuples, entries2, {
+      if (ht1.contains(n_regionkey[i])) {
+         entries.emplace_back(ht2.hash(n_nationkey[i]), n_nationkey[i],
+                              n_name[i]);
+         found++;
+      }
+   });
+   ht2.setSize(found2);
+   parallel_insert(entries2, ht2);
+   // ht2 nationkey that are in Asia
+   // todo:  push the selection with nations in ht2
+   // --- build ht for supplier
+   auto s_suppkey = su["s_suppkey"].data<types::Integer>();
+   auto s_nationkey = su["s_nationkey"].data<types::Integer>();
+   Hashset<std::tuple<types::Integer, types::Integer>, hash> ht5;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht5)::Entry>>
+       entries5;
+
+   PARALLEL_SCAN(su.nrTuples, entries5, {
+      auto key = make_tuple(s_suppkey[i], s_nationkey[i]);
+      entries.emplace_back(ht5.hash(key), key);
+   });
+
+   ht5.setSize(su.nrTuples);
+   parallel_insert(entries5, ht5);
+
+   // now we can proceed, for each customer with nationkey in ht2
+   // get its order within dates
+   // and for each
+   // --- join on nation and build ht
+   auto c_nationkey = cu["c_nationkey"].data<types::Integer>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto& l_suppkey = li["l_suppkey"].typedAccess<types::Integer>();
+
+   tbb::enumerable_thread_specific<
+       std::unordered_map<int, types::Numeric<12, 4>>>
+       entries3;
+
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
+       [&](const tbb::blocked_range<size_t>& r) {
+          auto& entries = entries3.local();
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+
+             // check if c_nation in hash table ht2
+             if (ht2.findOne(c_nationkey[i]) == nullptr) continue;
+             size_t b = (i > 0) ? indx[i - 1] : 0;
+             size_t e = indx[i];
+
+             for (size_t j = b; j < e; j++) {
+                size_t order_id = indx_val[j];
+                {
+                   size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+                   size_t order_end = iord[order_id];
+
+                   for (size_t k = order_begin; k < order_end; k++) {
+                      auto li_id = iord_val[k];
+                      auto key = make_tuple(l_suppkey[li_id], c_nationkey[i]);
+                      if (ht5.contains(key)) {
+                         entries[(int)c_nationkey[i].value] +=
+                             (l_extendedprice[li_id] *
+                              (one - l_discount[li_id]));
+                      }
+
+                   } // iterate oevr line item
+                }
+
+             } // iterate over order
+          }
+          // print sub aggregates
+          // for (auto e : entries) {
+          // cout << "\t" << e.first << "\t" << e.second << endl;
+          //}
+       } // customer
+   );
+   auto groupOp = make_GroupBy<types::Char<25>, types::Numeric<12, 4>, hash>(
+       [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+   // preaggregation
+
+   tbb::parallel_for(entries3.range(), [&](const auto& r) {
+      auto groupLocals = groupOp.preAggLocals();
+
+      for (auto& entries : r) {
+         for (auto& x : entries) {
+            auto v = ht2.findOne((x.first));
+            if (v) {
+               groupLocals.consume(*v, x.second);
+               //   cout << x.first << "\t " << (*v) << "\t " << x.second <<
+               //   endl;
+            }
+         }
+      }
+   });
+
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto nameAttr = result->addAttribute("n_name", sizeof(types::Char<25>));
+
+   groupOp.forallGroups([&](auto& groups) {
+      // write aggregates to result
+      auto block = result->createBlock(groups.size());
+      auto name = reinterpret_cast<types::Char<25>*>(block.data(nameAttr));
+      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+      for (auto block : groups)
+         for (auto& group : block) {
+            *name++ = group.k;
+            *rev++ = group.v;
+            // cout << "\t" << group.k << "\t" << group.v << endl;
+         }
+      block.addedElements(groups.size());
+   });
+
+   leaveQuery(nrThreads);
+   return move(resources.query);
+}
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q5_hyper_all(runtime::Database& db,
+                                                         size_t nrThreads) {
+
+   const size_t morselSize = 10000;
+
+   auto resources = initQuery(nrThreads);
+
+   auto& su = db["supplier"];
+   auto& re = db["region"];
+   auto& na = db["nation"];
+   auto& cu = db["customer"];
+   auto& ord = db["orders"];
+   auto& li = db["lineitem"];
+
+   using hash = runtime::CRC32Hash;
+
+   auto r_regionkey = re["r_regionkey"].data<types::Integer>();
+   // --- select region and build ht
+   Hashset<types::Integer, hash> ht1;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+       entries1;
+   auto found1 = PARALLEL_SELECT(re.nrTuples, entries1, {
+      entries.emplace_back(ht1.hash(r_regionkey[i]), r_regionkey[i]);
+      found++;
+   });
+   ht1.setSize(found1);
+   parallel_insert(entries1, ht1);
+
+   // --- join on region and build ht
+   auto n_regionkey = na["n_regionkey"].data<types::Integer>();
+   auto n_nationkey = na["n_nationkey"].data<types::Integer>();
+   auto n_name = na["n_name"].data<types::Char<25>>();
+   Hashmapx<types::Integer, types::Char<25>, hash> ht2;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+       entries2;
+   auto found2 = PARALLEL_SELECT(na.nrTuples, entries2, {
+      if (ht1.contains(n_regionkey[i])) {
+         entries.emplace_back(ht2.hash(n_nationkey[i]), n_nationkey[i],
+                              n_name[i]);
+         found++;
+      }
+   });
+   ht2.setSize(found2);
+   parallel_insert(entries2, ht2);
+
+   // --- join on nation and build ht
+   auto c_nationkey = cu["c_nationkey"].data<types::Integer>();
+   auto c_custkey = cu["c_custkey"].data<types::Integer>();
+   Hashmapx<types::Integer, std::tuple<types::Integer, types::Char<25>>, hash>
+       ht3;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht3)::Entry>>
+       entries3;
+
+   auto found3 = PARALLEL_SELECT(cu.nrTuples, entries3, {
+      decltype(ht2)::value_type* v;
+      if ((v = ht2.findOne(c_nationkey[i]))) {
+         entries.emplace_back(ht3.hash(c_custkey[i]), c_custkey[i],
+                              make_tuple(c_nationkey[i], *v));
+         found++;
+      }
+   });
+   ht3.setSize(found3);
+   parallel_insert(entries3, ht3);
+
+   // --- join on customer and build ht
+   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+   auto o_custkey = ord["o_custkey"].data<types::Integer>();
+   Hashmapx<types::Integer, std::tuple<types::Integer, types::Char<25>>, hash>
+       ht4;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht4)::Entry>>
+       entries4;
+
+   auto found4 = PARALLEL_SELECT(ord.nrTuples, entries4, {
+      decltype(ht3)::value_type* v;
+      if ((v = ht3.findOne(o_custkey[i]))) {
+         entries.emplace_back(ht4.hash(o_orderkey[i]), o_orderkey[i], *v);
+         found++;
+      }
+   });
+   ht4.setSize(found4);
+   parallel_insert(entries4, ht4);
+
+   // --- build ht for supplier
+   auto s_suppkey = su["s_suppkey"].data<types::Integer>();
+   auto s_nationkey = su["s_nationkey"].data<types::Integer>();
+   Hashset<std::tuple<types::Integer, types::Integer>, hash> ht5;
+   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht5)::Entry>>
+       entries5;
+
+   PARALLEL_SCAN(su.nrTuples, entries5, {
+      auto key = make_tuple(s_suppkey[i], s_nationkey[i]);
+      entries.emplace_back(ht5.hash(key), key);
+   });
+
+   ht5.setSize(su.nrTuples);
+   parallel_insert(entries5, ht5);
+
+   // --- join on customer and build ht
+   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+   auto l_suppkey = li["l_suppkey"].data<types::Integer>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+
+   const auto one = types::Numeric<12, 2>::castString("1.00");
+   const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+   auto groupOp = make_GroupBy<types::Char<25>, types::Numeric<12, 4>, hash>(
+       [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+   // preaggregation
+   tbb::parallel_for(
+       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+       [&](const tbb::blocked_range<size_t>& r) {
+          auto groupLocals = groupOp.preAggLocals();
+
+          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+             auto v = ht4.findOne(l_orderkey[i]);
+             if (v) {
+                auto suppkey = make_tuple(l_suppkey[i], get<0>(*v));
+                if (ht5.contains(suppkey)) {
+                   groupLocals.consume(get<1>(*v), l_extendedprice[i] *
+                                                       (one - l_discount[i]));
+                }
+             }
+          }
+       });
+
+   // --- output
+   auto& result = resources.query->result;
+   auto revAttr =
+       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+   auto nameAttr = result->addAttribute("n_name", sizeof(types::Char<25>));
+
+   groupOp.forallGroups([&](auto& groups) {
+      // write aggregates to result
+      auto block = result->createBlock(groups.size());
+      auto name = reinterpret_cast<types::Char<25>*>(block.data(nameAttr));
+      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+      for (auto block : groups)
+         for (auto& group : block) {
+            *name++ = group.k;
+            *rev++ = group.v;
+            // cout << "q5\t" << group.k << "\t" << group.v << endl;
          }
       block.addedElements(groups.size());
    });

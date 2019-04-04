@@ -562,6 +562,39 @@ void importTPCH(std::string dir, Database& db) {
    }
    cout << "______________________________________________" << endl;
 #endif
+
+   {
+      auto& indx = db.getindex("orders_key");
+
+      auto& ord = db["orders"];
+
+      auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+      auto max_order_key = o_orderkey[0];
+      for (size_t i = 1; i < ord.nrTuples; i++)
+         max_order_key = max(max_order_key, o_orderkey[i]);
+
+      indx.resize(max_order_key.value);
+      for (size_t i = 0; i < ord.nrTuples; i++) {
+         auto j = o_orderkey[i].value;
+         indx[j] = i;
+      }
+   }
+
+   {
+      auto& indx = db.getindex("customer_key");
+      auto& cu = db["customer"];
+      auto c_custkey = cu["c_custkey"].data<types::Integer>();
+
+      auto max_cust_key = c_custkey[0];
+      for (size_t i = 1; i < cu.nrTuples; i++)
+         max_cust_key = max(max_cust_key, c_custkey[i]);
+
+      indx.resize(max_cust_key.value);
+      for (size_t i = 0; i < cu.nrTuples; i++) {
+         auto j = c_custkey[i].value;
+         indx[j] = i;
+      }
+   }
 }
 
 void importSSB(std::string dir, Database& db) {

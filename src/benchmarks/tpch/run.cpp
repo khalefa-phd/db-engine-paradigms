@@ -56,9 +56,9 @@ int main(int argc, char* argv[]) {
    bool clearCaches = false;
    if (argc > 3) nrThreads = atoi(argv[3]);
 
-   std::unordered_set<std::string> q = {"1h", "1v",  "3h", "3hi", "3v",
-                                        "5h", "5v",  "6h", "6v",  "9h",
-                                        "9v", "18h", "18v"};
+   std::unordered_set<std::string> q = {
+       "1h", "1v", "3h", "3hi", "3hi2", "3ha", "3hia", "3v",
+       "5h", "5v", "6h", "6v",  "9h",   "9v",  "18h",  "18v"};
 
    if (auto v = std::getenv("vectorSize")) vectorSize = atoi(v);
    if (auto v = std::getenv("SIMDhash")) conf.useSimdHash = atoi(v);
@@ -105,15 +105,15 @@ int main(int argc, char* argv[]) {
                        },
                        repetitions);
 #endif
-#if 1
+#if 0
 
    if (q.count("5h"))
-      e.timeAndProfile("q5 hyper  (no sel)   ",
-                       nrTuples(tpch, {"supplier", "region", "nation",
-                                       "customer", "orders", "lineitem"}),
+      e.timeAndProfile("q5 hyper", 1000000,
+                       /*   nrTuples(tpch, {"supplier", "region", "nation",
+                                          "customer", "orders", "lineitem"}),*/
                        [&]() {
                           if (clearCaches) clearOsCaches();
-                          auto result = q5_no_sel_hyper(tpch);
+                          auto result = q5_hyper(tpch, nrThreads);
                           escape(&result);
                        },
                        repetitions);
@@ -128,12 +128,57 @@ int main(int argc, char* argv[]) {
                         },
                         repetitions);*/
    if (q.count("5h"))
-      e.timeAndProfile("q5 hyper index (no sel)   ",
-                       nrTuples(tpch, {"supplier", "region", "nation",
-                                       "customer", "orders", "lineitem"}),
+      e.timeAndProfile("q5 hyper index", 1000000 /*
+                         nrTuples(tpch, {"supplier", "region", "nation",
+                                         "customer", "orders", "lineitem"}),*/
+                       ,
                        [&]() {
                           if (clearCaches) clearOsCaches();
                           auto result = q5_hyper_i1(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("5h"))
+      e.timeAndProfile("q5 asia", 1000000,
+                       /*   nrTuples(tpch, {"supplier", "region", "nation",
+                                          "customer", "orders", "lineitem"}),*/
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q5_hyper_asia(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("5h"))
+      e.timeAndProfile("5h asia index", 1000000,
+                       /*   nrTuples(tpch, {"supplier", "region", "nation",
+                                          "customer", "orders", "lineitem"}),*/
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q5_hyper_asia_i(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("5h"))
+      e.timeAndProfile("q5 all", 1000000,
+                       /*   nrTuples(tpch, {"supplier", "region", "nation",
+                                          "customer", "orders", "lineitem"}),*/
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q5_hyper_all(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("5h"))
+      e.timeAndProfile("5h all index", 1000000,
+                       /*   nrTuples(tpch, {"supplier", "region", "nation",
+                                          "customer", "orders", "lineitem"}),*/
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q5_hyper_all_i(tpch, nrThreads);
                           escape(&result);
                        },
                        repetitions);
@@ -157,26 +202,57 @@ int main(int argc, char* argv[]) {
                           },
                           repetitions);*/
 #endif
-#if 0
+#if 1
 
-if (q.count("3h"))
-   e.timeAndProfile("q3 hyper all   ",
-                    nrTuples(tpch, {"customer", "orders", "lineitem"}),
-                    [&]() {
-                       if (clearCaches) clearOsCaches();
-                       auto result = q3_hyper_a(tpch, nrThreads);
-                       escape(&result);
-                    },
-                    repetitions);
-if (q.count("3hi"))
-   e.timeAndProfile("q3 hyper all index",
-                    nrTuples(tpch, {"customer", "orders", "lineitem"}),
-                    [&]() {
-                       if (clearCaches) clearOsCaches();
-                       auto result = q3_hyper_ia(tpch, nrThreads);
-                       escape(&result);
-                    },
-                    repetitions);
+   if (q.count("3h"))
+      e.timeAndProfile("q3 hyper",
+                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q3_hyper(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("3hi"))
+      e.timeAndProfile("q3 hyper index",
+                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q3_hyper_index(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("3ha"))
+      e.timeAndProfile("q3 hyper all   ",
+                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q3_hyper_a(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("3hia"))
+      e.timeAndProfile("q3 hyper all index",
+                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q3_hyper_ia(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
+
+   if (q.count("3hi2"))
+      e.timeAndProfile("q3 hyper index 2",
+                       nrTuples(tpch, {"customer", "orders", "lineitem"}),
+                       [&]() {
+                          if (clearCaches) clearOsCaches();
+                          auto result = q3_hyper_index2(tpch, nrThreads);
+                          escape(&result);
+                       },
+                       repetitions);
 
    if (q.count("3v"))
       e.timeAndProfile(
