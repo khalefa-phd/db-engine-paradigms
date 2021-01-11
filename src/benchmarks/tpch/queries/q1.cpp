@@ -124,7 +124,6 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper(Database& db,
 #ifdef DEBUG1
             print("entry.k", entry.k);
             print("entry.v", entry.v);
-
 #endif
             *ret++ = get<0>(entry.k);
             *status++ = get<1>(entry.k);
@@ -143,6 +142,109 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper(Database& db,
 
   leaveQuery(nrThreads);
   // print result
+#ifdef DEBUG1
+  cout << " blocks:" << result->noofBlocks();
+  std::cout << "\n\n--------------END---------q1_hyper\n";
+#endif
+  return move(resources.query);
+}
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_1g(Database& db,
+                                                        size_t nrThreads) {
+  using namespace types;
+  using namespace std;
+#ifdef DEBUG
+  std::cout << "-----------------------q1_hyper\n";
+#endif
+  types::Date c1 = types::Date::castString("1998-09-02");
+  types::Numeric<12, 2> one = types::Numeric<12, 2>::castString("1.00");
+  auto& li = db["lineitem"];
+  // auto l_returnflag = li["l_returnflag"].data<types::Char<1>>();
+  // auto l_linestatus = li["l_linestatus"].data<types::Char<1>>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto l_tax = li["l_tax"].data<types::Numeric<12, 2>>();
+  auto l_quantity = li["l_quantity"].data<types::Numeric<12, 2>>();
+  auto l_shipdate = li["l_shipdate"].data<types::Date>();
+
+  auto resources = initQuery(nrThreads);
+
+  using hash = runtime::CRC32Hash;
+
+  using result_t = tuple<Numeric<12, 2>, Numeric<12, 2>, Numeric<12, 4>,
+                         Numeric<12, 6>, int64_t>;
+
+  auto identity = make_tuple(Numeric<12, 2>(), Numeric<12, 2>(),
+                             Numeric<12, 4>(), Numeric<12, 6>(), int64_t(0));
+
+  auto r = tbb::parallel_reduce(
+      // Index range for reduction
+      tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+      // Identity element
+      identity,
+      // Reduce a subrange and partial sum
+      [&](tbb::blocked_range<size_t>& r, result_t partial_sum) -> result_t {
+        result_t pr = partial_sum;
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          if (l_shipdate[i] <= c1) {
+            get<0>(pr) += l_quantity[i];
+            get<1>(pr) += l_extendedprice[i];
+            auto disc_price = l_extendedprice[i] * (one - l_discount[i]);
+            get<2>(pr) += disc_price;
+            auto charge = disc_price * (one + l_tax[i]);
+            get<3>(pr) += charge;
+            get<4>(pr) += 1;
+          }
+        }
+        return pr;
+      },
+      // Reduce two partial sums
+      [](result_t acc, const result_t value) {
+        get<0>(acc) += get<0>(value);
+        get<1>(acc) += get<1>(value);
+        get<2>(acc) += get<2>(value);
+        get<3>(acc) += get<3>(value);
+        get<4>(acc) += get<4>(value);
+        return acc;
+      }
+
+  );
+
+  auto& result = resources.query->result;
+  auto retAttr = result->addAttribute("l_returnflag", sizeof(Char<1>));
+  auto statusAttr = result->addAttribute("l_linestatus", sizeof(Char<1>));
+  auto qtyAttr = result->addAttribute("sum_qty", sizeof(Numeric<12, 2>));
+  auto base_priceAttr =
+      result->addAttribute("sum_base_price", sizeof(Numeric<12, 2>));
+  auto disc_priceAttr =
+      result->addAttribute("sum_disc_price", sizeof(Numeric<12, 2>));
+  auto chargeAttr = result->addAttribute("sum_charge", sizeof(Numeric<12, 2>));
+  auto count_orderAttr = result->addAttribute("count_order", sizeof(int64_t));
+
+  auto n = 1;
+  auto block = result->createBlock(n);
+  auto qty = reinterpret_cast<Numeric<12, 2>*>(block.data(qtyAttr));
+  auto base_price =
+      reinterpret_cast<Numeric<12, 2>*>(block.data(base_priceAttr));
+  auto disc_price =
+      reinterpret_cast<Numeric<12, 4>*>(block.data(disc_priceAttr));
+  auto charge = reinterpret_cast<Numeric<12, 6>*>(block.data(chargeAttr));
+  auto count_order = reinterpret_cast<int64_t*>(block.data(count_orderAttr));
+
+  *qty++ = get<0>(r);
+  *base_price++ = get<1>(r);
+  *disc_price++ = get<2>(r);
+  *charge++ = get<3>(r);
+  *count_order++ = get<4>(r);
+
+  block.addedElements(n);
+#ifdef DEBUG1
+  cout << "Added " << n << " elements "
+       << " \n";
+#endif
+
+  leaveQuery(nrThreads);
+// print result
 #ifdef DEBUG1
   cout << " blocks:" << result->noofBlocks();
   std::cout << "\n\n--------------END---------q1_hyper\n";
@@ -188,10 +290,9 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_0(Database& db,
                  Numeric<12, 6>(), int64_t(0)),
       nrThreads);
 
+  tbb::parallel_for(tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+                    [&](const tbb::blocked_range<size_t>& r) {
 #if 0
-  tbb::parallel_for(
-      tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
-      [&](const tbb::blocked_range<size_t>& r) {
         auto locals = groupOp.preAggLocals();
         for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
           if (l_shipdate[i] <= c1) {
@@ -207,8 +308,9 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_0(Database& db,
             get<4>(group) += 1;
           }
         }
-      });
-
+#endif
+                    });
+#if 0
   auto& result = resources.query->result;
   auto retAttr = result->addAttribute("l_returnflag", sizeof(Char<1>));
   auto statusAttr = result->addAttribute("l_linestatus", sizeof(Char<1>));
