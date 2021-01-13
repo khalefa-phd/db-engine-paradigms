@@ -1,3 +1,6 @@
+#include <iostream>
+#include <map>
+
 #include "benchmarks/tpch/Queries.hpp"
 #include "common/runtime/Hash.hpp"
 #include "common/runtime/Types.hpp"
@@ -9,8 +12,6 @@
 #include "vectorwise/Primitives.hpp"
 #include "vectorwise/QueryBuilder.hpp"
 #include "vectorwise/VectorAllocator.hpp"
-#include <iostream>
-#include <map>
 using namespace runtime;
 using namespace std;
 using vectorwise::primitives::Char_10;
@@ -36,7 +37,7 @@ using vectorwise::primitives::hash_t;
 //   o_orderdate,
 //   o_shippriority
 
-// VERBOSE I for debug inforamtion
+// VERBOSE I for debug information
 //#define VERBOSE_I
 // VERBOSE II for  more detailed debug inforamtion
 //#define VERBOSE_II
@@ -50,910 +51,891 @@ template <class InputIterT1, class InputIterT2, class OutputIterT,
 OutputIterT merge_apply(InputIterT1 first1, InputIterT1 last1,
                         InputIterT2 first2, InputIterT2 last2,
                         OutputIterT result, Comparator comp, Func func) {
-   while (true) {
-      if (first1 == last1) return std::copy(first2, last2, result);
-      if (first2 == last2) return std::copy(first1, last1, result);
+  while (true) {
+    if (first1 == last1) return std::copy(first2, last2, result);
+    if (first2 == last2) return std::copy(first1, last1, result);
 
-      if (comp(*first1, *first2) < 0) {
-         *result = *first1;
-         ++first1;
-      } else if (comp(*first1, *first2) > 0) {
-         *result = *first2;
-         ++first2;
-      } else {
-         *result = func(*first1, *first2);
-         ++first1;
-         ++first2;
-      }
-      ++result;
-   }
+    if (comp(*first1, *first2) < 0) {
+      *result = *first1;
+      ++first1;
+    } else if (comp(*first1, *first2) > 0) {
+      *result = *first2;
+      ++first2;
+    } else {
+      *result = func(*first1, *first2);
+      ++first1;
+      ++first2;
+    }
+    ++result;
+  }
 }
 
-template <class T> int compare_first(T a, T b) { return a.first - b.first; }
+template <class T>
+int compare_first(T a, T b) {
+  return a.first - b.first;
+}
 
-NOVECTORIZE std::unique_ptr<runtime::Query>
-q3_hyper_index2(runtime::Database& db, size_t nrThreads) {
+NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_index2(
+    runtime::Database& db, size_t nrThreads) {
 #ifdef VERBOSE_I
-   cout << "hi from q3_hyper index 2" << endl;
+  cout << "hi from q3_hyper index 2" << endl;
 #endif
-   // --- aggregates
-   auto resources = initQuery(nrThreads);
-   // --- constants
-   auto c1 = types::Date::castString("1995-03-15");
-   auto c2 = types::Date::castString("1995-03-15");
-   string b = "BUILDING";
-   auto c3 = types::Char<10>::castString(b.data(), b.size());
+  // --- aggregates
+  auto resources = initQuery(nrThreads);
+  // --- constants
+  auto c1 = types::Date::castString("1995-03-15");
+  auto c2 = types::Date::castString("1995-03-15");
+  string b = "BUILDING";
+  auto c3 = types::Char<10>::castString(b.data(), b.size());
 
-   auto& cu = db["customer"];
-   auto& ord = db["orders"];
-   auto& li = db["lineitem"];
-   // indexes
-   auto& icust = db.getindex("customer_key");
-   auto& iord = db.getindex("orders_key");
+  auto& cu = db["customer"];
+  auto& ord = db["orders"];
+  auto& li = db["lineitem"];
+  // indexes
+  auto& icust = db.getindex("customer_key");
+  auto& iord = db.getindex("orders_key");
 
-   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
-   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
-   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-   auto l_shipdate = li["l_shipdate"].data<types::Date>();
-   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
-   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
-   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
-   auto o_custkey = ord["o_custkey"].data<types::Integer>();
-   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+  auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+  auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+  auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+  auto l_shipdate = li["l_shipdate"].data<types::Date>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+  auto o_custkey = ord["o_custkey"].data<types::Integer>();
+  auto l_orderkey = li["l_orderkey"].data<types::Integer>();
 
-   const size_t morselSize = 1000;
-   const auto one = types::Numeric<12, 2>::castString("1.00");
+  const size_t morselSize = 1000;
+  const auto one = types::Numeric<12, 2>::castString("1.00");
 
-   tbb::enumerable_thread_specific<
-       std::map<types::Integer,
-                std::tuple<types::Date, types::Integer, types::Numeric<12, 4>>>>
-       entries1;
+  tbb::enumerable_thread_specific<
+      std::map<types::Integer,
+               std::tuple<types::Date, types::Integer, types::Numeric<12, 4>>>>
+      entries1;
 
-   tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
-       [&](const tbb::blocked_range<size_t>& r) {
-          auto& entries = entries1.local();
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             if (l_shipdate[i] > c2) {
-                // get the order
-                size_t order_indx = iord[l_orderkey[i].value];
-                if (o_orderdate[order_indx] < c1) {
-                   // get the customer
-                   size_t cust_indx = icust[o_custkey[order_indx].value];
-                   if (c_mktsegment[i] == c3) {
-                      entries[order_indx] = make_tuple(
-                          o_orderdate[order_indx], o_shippriority[order_indx],
-                          std::get<2>(entries[order_indx]));
-                   }
-                }
-             }
+  tbb::parallel_for(
+      tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+      [&](const tbb::blocked_range<size_t>& r) {
+        auto& entries = entries1.local();
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          if (l_shipdate[i] > c2) {
+            // get the order
+            size_t order_indx = iord[l_orderkey[i].value];
+            if (o_orderdate[order_indx] < c1) {
+              // get the customer
+              size_t cust_indx = icust[o_custkey[order_indx].value];
+              if (c_mktsegment[i] == c3) {
+                entries[order_indx] = make_tuple(
+                    o_orderdate[order_indx], o_shippriority[order_indx],
+                    std::get<2>(entries[order_indx]));
+              }
+            }
           }
-       });
+        }
+      });
 
-   // we need to combine the hashtables from all threads
-   // Reduction from tbb
-   // https://software.intel.com/en-us/node/506117
-   //  destructively use the partial results to generate the final result.
-   using myval = std::tuple<types::Date, types::Integer, types::Numeric<12, 4>>;
-   std::map<types::Integer, myval> sum =
-       entries1.combine([](std::map<types::Integer, myval> a,
-                           std::map<types::Integer, myval> b) {
-          map<types::Integer, myval> c;
-          merge_apply(
-              a.begin(), a.end(), b.begin(), b.end(), inserter(c, c.begin()),
-              [](pair<types::Integer, myval> a, pair<types::Integer, myval> b) {
-                 return a.first.value - b.first.value;
-              },
-              [](pair<types::Integer, myval> a, pair<types::Integer, myval> b) {
-                 auto s = get<2>(a.second) + get<2>(b.second);
-                 return make_pair(a.first, make_tuple(get<0>(a.second),
-                                                      get<1>(a.second), s));
-              });
-          return c;
-       });
+  // we need to combine the hashtables from all threads
+  // Reduction from tbb
+  // https://software.intel.com/en-us/node/506117
+  //  destructively use the partial results to generate the final result.
+  using myval = std::tuple<types::Date, types::Integer, types::Numeric<12, 4>>;
+  std::map<types::Integer, myval> sum = entries1.combine(
+      [](std::map<types::Integer, myval> a, std::map<types::Integer, myval> b) {
+        map<types::Integer, myval> c;
+        merge_apply(
+            a.begin(), a.end(), b.begin(), b.end(), inserter(c, c.begin()),
+            [](pair<types::Integer, myval> a, pair<types::Integer, myval> b) {
+              return a.first.value - b.first.value;
+            },
+            [](pair<types::Integer, myval> a, pair<types::Integer, myval> b) {
+              auto s = get<2>(a.second) + get<2>(b.second);
+              return make_pair(
+                  a.first, make_tuple(get<0>(a.second), get<1>(a.second), s));
+            });
+        return c;
+      });
 
-   vector<std::tuple<types::Integer, types::Date, types::Integer,
-                     types::Numeric<12, 4>>>
-       tuples;
+  vector<std::tuple<types::Integer, types::Date, types::Integer,
+                    types::Numeric<12, 4>>>
+      tuples;
 
-   for (auto e : sum) {
-      tuples.push_back(make_tuple(e.first, get<0>(e.second), get<1>(e.second),
-                                  get<2>(e.second)));
-   }
-   // --- output
-   auto& result = resources.query->result;
-   auto revAttr =
-       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
-   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
-   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
-   auto prioAttr =
-       result->addAttribute("o_shippriority", sizeof(types::Integer));
-   // write aggregates to result
-   tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, tuples.size(), morselSize / 10),
-       [&](const tbb::blocked_range<size_t>& r) {
-          // auto n = r.end() - r.begin();
-          //{
-          // mutex _m;
-          // unique_lock<mutex> lock(_m);
+  for (auto e : sum) {
+    tuples.push_back(make_tuple(e.first, get<0>(e.second), get<1>(e.second),
+                                get<2>(e.second)));
+  }
+  // --- output
+  auto& result = resources.query->result;
+  auto revAttr = result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+  auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+  auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+  auto prioAttr =
+      result->addAttribute("o_shippriority", sizeof(types::Integer));
+  // write aggregates to result
+  tbb::parallel_for(
+      tbb::blocked_range<size_t>(0, tuples.size(), morselSize / 10),
+      [&](const tbb::blocked_range<size_t>& r) {
+        // auto n = r.end() - r.begin();
+        //{
+        // mutex _m;
+        // unique_lock<mutex> lock(_m);
 
-          // cout << r.begin() << " " << r.end() << "\n";
-          //}
-          auto n = r.end() - r.begin();
-          auto block = result->createBlock(n);
-          auto rev =
-              reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
-          auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
-          auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
-          auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
+        // cout << r.begin() << " " << r.end() << "\n";
+        //}
+        auto n = r.end() - r.begin();
+        auto block = result->createBlock(n);
+        auto rev =
+            reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+        auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
+        auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
+        auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
 
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             auto entry = tuples[i];
-             *order++ = get<0>(entry);
-             *date++ = get<1>(entry);
-             *prio++ = get<2>(entry);
-             *rev++ = get<3>(entry);
-          }
-          block.addedElements(n);
-       });
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          auto entry = tuples[i];
+          *order++ = get<0>(entry);
+          *date++ = get<1>(entry);
+          *prio++ = get<2>(entry);
+          *rev++ = get<3>(entry);
+        }
+        block.addedElements(n);
+      });
 
-   leaveQuery(nrThreads);
+  leaveQuery(nrThreads);
 #ifdef VERBOSE_I
-   cout << "q3_hyper index" << endl;
+  cout << "q3_hyper index" << endl;
 #endif
 
-   return move(resources.query);
+  return move(resources.query);
 }
 
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_ia(runtime::Database& db,
                                                         size_t nrThreads) {
 #ifdef VERBOSE_I
-   cout << "hi from q3_hyper index no where" << endl;
+  cout << "hi from q3_hyper index no where" << endl;
 #endif
-   // --- aggregates
-   auto resources = initQuery(nrThreads);
-   // --- constants
-   string b = "BUILDING";
-   auto c3 = types::Char<10>::castString(b.data(), b.size());
+  // --- aggregates
+  auto resources = initQuery(nrThreads);
+  // --- constants
+  string b = "BUILDING";
+  auto c3 = types::Char<10>::castString(b.data(), b.size());
 
-   auto& cu = db["customer"];
-   auto& ord = db["orders"];
-   auto& li = db["lineitem"];
-   // indexes
-   auto& indx = db.getindex("cust_ord");
-   auto& indx_val = db.getindex("cust_ord_vals");
-   auto& iord = db.getindex("ord_li");
-   auto& iord_val = db.getindex("ord_li_vals");
+  auto& cu = db["customer"];
+  auto& ord = db["orders"];
+  auto& li = db["lineitem"];
+  // indexes
+  auto& indx = db.getindex("cust_ord");
+  auto& indx_val = db.getindex("cust_ord_vals");
+  auto& iord = db.getindex("ord_li");
+  auto& iord_val = db.getindex("ord_li_vals");
 
-   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
-   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
-   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
-   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
-   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+  auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+  auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+  auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
 
 #ifdef VERBOSE_II
-   auto c_custkey = cu["c_custkey"].data<types::Integer>();
-   auto l_linenumber = li["l_linenumber"].data<types::Integer>();
+  auto c_custkey = cu["c_custkey"].data<types::Integer>();
+  auto l_linenumber = li["l_linenumber"].data<types::Integer>();
 #endif
 
-   const size_t morselSize = 100;
-   const auto one = types::Numeric<12, 2>::castString("1.00");
+  const size_t morselSize = 100;
+  const auto one = types::Numeric<12, 2>::castString("1.00");
 
-   tbb::enumerable_thread_specific<std::vector<std::tuple<
-       types::Integer, types::Date, types::Integer, types::Numeric<12, 4>>>>
-       entries1;
+  tbb::enumerable_thread_specific<std::vector<std::tuple<
+      types::Integer, types::Date, types::Integer, types::Numeric<12, 4>>>>
+      entries1;
 
-   tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
-       [&](const tbb::blocked_range<size_t>& r) {
-          auto& entries = entries1.local();
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             // std::cout << c_custkey[i] << std::endl;
-             if (c_mktsegment[i] == c3) {
+  tbb::parallel_for(
+      tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
+      [&](const tbb::blocked_range<size_t>& r) {
+        auto& entries = entries1.local();
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          // std::cout << c_custkey[i] << std::endl;
+          if (c_mktsegment[i] == c3) {
 #ifdef VERBOSE_II
-                std::cout << c_custkey[i] << std::endl;
+            std::cout << c_custkey[i] << std::endl;
 #endif
-                size_t b = (i > 0) ? indx[i - 1] : 0;
-                size_t e = indx[i];
+            size_t b = (i > 0) ? indx[i - 1] : 0;
+            size_t e = indx[i];
 
-                for (size_t j = b; j < e; j++) {
-                   size_t order_id = indx_val[j];
-                   //     std::cout << "-\t" << o_orderkey[order_id] <<
-                   //     std::endl;
-                   if (1 /*o_orderdate[order_id] < c1*/) {
+            for (size_t j = b; j < e; j++) {
+              size_t order_id = indx_val[j];
+              //     std::cout << "-\t" << o_orderkey[order_id] <<
+              //     std::endl;
+              if (1 /*o_orderdate[order_id] < c1*/) {
 #ifdef VERBOSE_II
-                      std::cout << "\t" << o_orderkey[order_id] << std::endl;
+                std::cout << "\t" << o_orderkey[order_id] << std::endl;
 #endif
 
-                      // do not add it to the hash table
-                      // we can compute the value now
+                // do not add it to the hash table
+                // we can compute the value now
 
-                      size_t order_begin =
-                          (order_id > 0) ? iord[order_id - 1] : 0;
-                      size_t order_end = iord[order_id];
-                      types::Numeric<12, 4> agg = 0;
-                      bool used = false;
-                      for (size_t k = order_begin; k < order_end; k++) {
-                         auto li_id = iord_val[k];
+                size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+                size_t order_end = iord[order_id];
+                types::Numeric<12, 4> agg = 0;
+                bool used = false;
+                for (size_t k = order_begin; k < order_end; k++) {
+                  auto li_id = iord_val[k];
 
-                         if (/*l_shipdate[li_id] > c2*/ 1) {
+                  if (/*l_shipdate[li_id] > c2*/ 1) {
 #ifdef VERBOSE_II
-                            std::cout << "\t\t" << l_linenumber[li_id]
-                                      << std::endl;
+                    std::cout << "\t\t" << l_linenumber[li_id] << std::endl;
 #endif
-                            used = true;
-                            agg += (l_extendedprice[li_id] *
-                                    (one - l_discount[li_id]));
-                         }
-                      }
-                      if (used)
-                         entries.emplace_back(make_tuple(
-                             o_orderkey[order_id], o_orderdate[order_id],
-                             o_shippriority[order_id], agg));
-                   }
+                    used = true;
+                    agg += (l_extendedprice[li_id] * (one - l_discount[li_id]));
+                  }
                 }
-             }
-          }
-       });
-#ifdef VERBOSE
-   cout << "Preparing results" << endl;
-#endif
-   // --- output
-   auto& result = resources.query->result;
-   auto revAttr =
-       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
-   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
-   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
-   auto prioAttr =
-       result->addAttribute("o_shippriority", sizeof(types::Integer));
-#ifdef VERBOSE_OUTPUT
-   std::mutex io_lock;
-#endif
-   // write aggregates to result
-   tbb::parallel_for(entries1.range(), [&](const auto& r) {
-      for (auto& entries : r) {
-
-         auto n = entries.size();
-         auto block = result->createBlock(n);
-         auto rev =
-             reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
-         auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
-         auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
-         auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
-         for (auto& entry : entries) {
-            *order++ = get<0>(entry);
-            *date++ = get<1>(entry);
-            *prio++ = get<2>(entry);
-            *rev++ = get<3>(entry);
-#ifdef VERBOSE_OUTPUT
-            {
-               std::unique_lock<std::mutex> lk(io_lock);
-               cout << "+\t" << get<0>(entry) << "\t" << get<1>(entry) << "\t"
-                    << get<2>(entry) << "\t" << get<3>(entry) << endl;
+                if (used)
+                  entries.emplace_back(
+                      make_tuple(o_orderkey[order_id], o_orderdate[order_id],
+                                 o_shippriority[order_id], agg));
+              }
             }
-#endif
-         }
-         block.addedElements(n);
-      }
-   });
+          }
+        }
+      });
 #ifdef VERBOSE
-   cout << "size" << n << endl;
+  cout << "Preparing results" << endl;
+#endif
+  // --- output
+  auto& result = resources.query->result;
+  auto revAttr = result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+  auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+  auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+  auto prioAttr =
+      result->addAttribute("o_shippriority", sizeof(types::Integer));
+#ifdef VERBOSE_OUTPUT
+  std::mutex io_lock;
+#endif
+  // write aggregates to result
+  tbb::parallel_for(entries1.range(), [&](const auto& r) {
+    for (auto& entries : r) {
+      auto n = entries.size();
+      auto block = result->createBlock(n);
+      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+      auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
+      auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
+      auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
+      for (auto& entry : entries) {
+        *order++ = get<0>(entry);
+        *date++ = get<1>(entry);
+        *prio++ = get<2>(entry);
+        *rev++ = get<3>(entry);
+#ifdef VERBOSE_OUTPUT
+        {
+          std::unique_lock<std::mutex> lk(io_lock);
+          cout << "+\t" << get<0>(entry) << "\t" << get<1>(entry) << "\t"
+               << get<2>(entry) << "\t" << get<3>(entry) << endl;
+        }
+#endif
+      }
+      block.addedElements(n);
+    }
+  });
+#ifdef VERBOSE
+  cout << "size" << n << endl;
 #endif
 
-   leaveQuery(nrThreads);
+  leaveQuery(nrThreads);
 #ifdef VERBOSE_I
-   cout << "q3_hyper index" << endl;
+  cout << "q3_hyper index" << endl;
 #endif
 
-   return move(resources.query);
+  return move(resources.query);
 }
 // all
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_a(Database& db,
                                                        size_t nrThreads) {
-
 // --- aggregates
 #ifdef VERBOSE_I
-   cout << "hi from q3_hyper" << endl;
+  cout << "hi from q3_hyper" << endl;
 #endif
-   auto resources = initQuery(nrThreads);
+  auto resources = initQuery(nrThreads);
 
-   // --- constants
-   // auto c1 = types::Date::castString("1995-03-15");
-   // auto c2 = types::Date::castString("1995-03-15");
-   string b = "BUILDING";
-   auto c3 = types::Char<10>::castString(b.data(), b.size());
+  // --- constants
+  // auto c1 = types::Date::castString("1995-03-15");
+  // auto c2 = types::Date::castString("1995-03-15");
+  string b = "BUILDING";
+  auto c3 = types::Char<10>::castString(b.data(), b.size());
 
-   auto& cu = db["customer"];
-   auto& ord = db["orders"];
-   auto& li = db["lineitem"];
+  auto& cu = db["customer"];
+  auto& ord = db["orders"];
+  auto& li = db["lineitem"];
 
-   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
-   auto c_custkey = cu["c_custkey"].data<types::Integer>();
-   auto o_custkey = ord["o_custkey"].data<types::Integer>();
-   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
-   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
-   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
-   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
-   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+  auto c_custkey = cu["c_custkey"].data<types::Integer>();
+  auto o_custkey = ord["o_custkey"].data<types::Integer>();
+  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+  auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+  auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+  auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
 
-   using hash = runtime::CRC32Hash;
-   using range = tbb::blocked_range<size_t>;
+  using hash = runtime::CRC32Hash;
+  using range = tbb::blocked_range<size_t>;
 
-   const auto add = [](const size_t& a, const size_t& b) { return a + b; };
-   const size_t morselSize = 100000;
+  const auto add = [](const size_t& a, const size_t& b) { return a + b; };
+  const size_t morselSize = 100000;
 
-   // build ht for first join
-   Hashset<types::Integer, hash> ht1;
-   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
-       entries1;
-   auto found1 = tbb::parallel_reduce(
-       range(0, cu.nrTuples, morselSize), 0,
-       [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
-          auto found = f;
-          auto& entries = entries1.local();
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             if (c_mktsegment[i] == c3) {
+  // build ht for first join
+  Hashset<types::Integer, hash> ht1;
+  tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+      entries1;
+  auto found1 = tbb::parallel_reduce(
+      range(0, cu.nrTuples, morselSize), 0,
+      [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
+        auto found = f;
+        auto& entries = entries1.local();
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          if (c_mktsegment[i] == c3) {
 #ifdef VERBOSE_II
-                std::cout << c_custkey[i] << std::endl;
+            std::cout << c_custkey[i] << std::endl;
 #endif
 
-                entries.emplace_back(ht1.hash(c_custkey[i]), c_custkey[i]);
-                found++;
-             }
+            entries.emplace_back(ht1.hash(c_custkey[i]), c_custkey[i]);
+            found++;
           }
-          return found;
-       },
-       add);
-   ht1.setSize(found1);
-   parallel_insert(entries1, ht1);
+        }
+        return found;
+      },
+      add);
+  ht1.setSize(found1);
+  parallel_insert(entries1, ht1);
 
-   // join and build second ht
-   Hashmapx<types::Integer, std::tuple<types::Date, types::Integer>, hash> ht2;
-   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
-       entries2;
-   auto found2 = tbb::parallel_reduce(
-       range(0, ord.nrTuples, morselSize), 0,
-       [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
-          auto& entries = entries2.local();
-          auto found = f;
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i)
-             if (/* o_orderdate[i] < c1   && */ ht1.contains(o_custkey[i])) {
+  // join and build second ht
+  Hashmapx<types::Integer, std::tuple<types::Date, types::Integer>, hash> ht2;
+  tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+      entries2;
+  auto found2 = tbb::parallel_reduce(
+      range(0, ord.nrTuples, morselSize), 0,
+      [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
+        auto& entries = entries2.local();
+        auto found = f;
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i)
+          if (/* o_orderdate[i] < c1   && */ ht1.contains(o_custkey[i])) {
 #ifdef VERBOSE_II
-                std::cout << "\t" << o_custkey[i] << "\t" << o_orderkey[i]
-                          << std::endl;
+            std::cout << "\t" << o_custkey[i] << "\t" << o_orderkey[i]
+                      << std::endl;
 #endif
-                entries.emplace_back(
-                    ht2.hash(o_orderkey[i]), o_orderkey[i],
-                    make_tuple(o_orderdate[i], o_shippriority[i]));
-                found++;
-             }
-          return found;
-       },
-       add);
-   ht2.setSize(found2);
-   parallel_insert(entries2, ht2);
-
-   const auto one = types::Numeric<12, 2>::castString("1.00");
-   const auto zero = types::Numeric<12, 4>::castString("0.00");
-
-   tbb::enumerable_thread_specific<
-       Hashmapx<std::tuple<types::Integer, types::Date, types::Integer>,
-                types::Numeric<12, 4>, hash, false>>
-       groups;
-
-   auto groupOp =
-       make_GroupBy<std::tuple<types::Integer, types::Date, types::Integer>,
-                    types::Numeric<12, 4>, hash>(
-           [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
-
-   // preaggregation
-   tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
-       [&](const tbb::blocked_range<size_t>& r) {
-          auto locals = groupOp.preAggLocals();
-
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             decltype(ht2)::value_type* v;
-             if (/*l_shipdate[i] > c2 &&*/ (v = ht2.findOne(l_orderkey[i]))) {
-                locals.consume(
-                    make_tuple(l_orderkey[i], get<0>(*v), get<1>(*v)),
-                    l_extendedprice[i] * (one - l_discount[i]));
-             }
+            entries.emplace_back(ht2.hash(o_orderkey[i]), o_orderkey[i],
+                                 make_tuple(o_orderdate[i], o_shippriority[i]));
+            found++;
           }
-       });
+        return found;
+      },
+      add);
+  ht2.setSize(found2);
+  parallel_insert(entries2, ht2);
+
+  const auto one = types::Numeric<12, 2>::castString("1.00");
+  const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+  tbb::enumerable_thread_specific<
+      Hashmapx<std::tuple<types::Integer, types::Date, types::Integer>,
+               types::Numeric<12, 4>, hash, false>>
+      groups;
+
+  auto groupOp =
+      make_GroupBy<std::tuple<types::Integer, types::Date, types::Integer>,
+                   types::Numeric<12, 4>, hash>(
+          [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+  // preaggregation
+  tbb::parallel_for(
+      tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+      [&](const tbb::blocked_range<size_t>& r) {
+        auto locals = groupOp.preAggLocals();
+
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          decltype(ht2)::value_type* v;
+          if (/*l_shipdate[i] > c2 &&*/ (v = ht2.findOne(l_orderkey[i]))) {
+            locals.consume(make_tuple(l_orderkey[i], get<0>(*v), get<1>(*v)),
+                           l_extendedprice[i] * (one - l_discount[i]));
+          }
+        }
+      });
 #ifdef VERBOSE_OUTPUT
-   std::mutex io_lock;
+  std::mutex io_lock;
 #endif
-   // --- output
-   auto& result = resources.query->result;
-   auto revAttr =
-       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
-   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
-   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
-   auto prioAttr =
-       result->addAttribute("o_shippriority", sizeof(types::Integer));
-   std::atomic<size_t> n_t;
-   groupOp.forallGroups([&](auto& entries) {
-      // write aggregates to result
+  // --- output
+  auto& result = resources.query->result;
+  auto revAttr = result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+  auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+  auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+  auto prioAttr =
+      result->addAttribute("o_shippriority", sizeof(types::Integer));
+  std::atomic<size_t> n_t;
+  groupOp.forallGroups([&](auto& entries) {
+    // write aggregates to result
+    auto n = entries.size();
+    n_t.fetch_add(n, std::memory_order_relaxed);
+    auto block = result->createBlock(n);
+    auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+    auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
+    auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
+    auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
+    for (auto block : entries)
+      for (auto& entry : block) {
+        *order++ = get<0>(entry.k);
+        *date++ = get<1>(entry.k);
+        *prio++ = get<2>(entry.k);
+        *rev++ = entry.v;
+#ifdef VERBOSE_OUTPUT
+        {
+          std::unique_lock<std::mutex> lk(io_lock);
+          cout << "^\t" << get<0>(entry.k) << "\t" << get<1>(entry.k) << "\t"
+               << get<2>(entry.k) << "\t" << (entry.v) << endl;
+        }
+#endif
+      }
+    block.addedElements(n);
+  });
+
+#ifdef VERBOSE_I
+  cout << "end q3_hyper" << endl;
+#endif
+
+  leaveQuery(nrThreads);
+
+#ifdef VERBOSE
+  cout << "Customer count " << found1 << endl;
+  cout << "Order count " << found2 << endl;
+  cout << "size :" << n_t << endl;
+
+#endif
+  return move(resources.query);
+}
+NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper_index(
+    runtime::Database& db, size_t nrThreads) {
+#ifdef VERBOSE_I
+  cout << "hi from q3_hyper index" << endl;
+#endif
+  // --- aggregates
+  auto resources = initQuery(nrThreads);
+  // --- constants
+  auto c1 = types::Date::castString("1995-03-15");
+  auto c2 = types::Date::castString("1995-03-15");
+  string b = "BUILDING";
+  auto c3 = types::Char<10>::castString(b.data(), b.size());
+
+  auto& cu = db["customer"];
+  auto& ord = db["orders"];
+  auto& li = db["lineitem"];
+  // indexes
+  auto& indx = db.getindex("cust_ord");
+  auto& indx_val = db.getindex("cust_ord_vals");
+  auto& iord = db.getindex("ord_li");
+  auto& iord_val = db.getindex("ord_li_vals");
+
+  auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+  auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+  auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+  auto l_shipdate = li["l_shipdate"].data<types::Date>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+
+#ifdef VERBOSE_II
+  auto c_custkey = cu["c_custkey"].data<types::Integer>();
+  auto l_linenumber = li["l_linenumber"].data<types::Integer>();
+#endif
+
+  const size_t morselSize = 100;
+  const auto one = types::Numeric<12, 2>::castString("1.00");
+
+  tbb::enumerable_thread_specific<std::vector<std::tuple<
+      types::Integer, types::Date, types::Integer, types::Numeric<12, 4>>>>
+      entries1;
+
+  tbb::parallel_for(
+      tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
+      [&](const tbb::blocked_range<size_t>& r) {
+        auto& entries = entries1.local();
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          // std::cout << c_custkey[i] << std::endl;
+          if (c_mktsegment[i] == c3) {
+#ifdef VERBOSE_II
+            std::cout << c_custkey[i] << std::endl;
+#endif
+            size_t b = (i > 0) ? indx[i - 1] : 0;
+            size_t e = indx[i];
+
+            for (size_t j = b; j < e; j++) {
+              size_t order_id = indx_val[j];
+              //     std::cout << "-\t" << o_orderkey[order_id] <<
+              //     std::endl;
+              if (o_orderdate[order_id] < c1) {
+#ifdef VERBOSE_II
+                std::cout << "\t" << o_orderkey[order_id] << std::endl;
+#endif
+
+                // do not add it to the hash table
+                // we can compute the value now
+
+                size_t order_begin = (order_id > 0) ? iord[order_id - 1] : 0;
+                size_t order_end = iord[order_id];
+                types::Numeric<12, 4> agg = 0;
+                bool used = false;
+                for (size_t k = order_begin; k < order_end; k++) {
+                  auto li_id = iord_val[k];
+
+                  if (l_shipdate[li_id] > c2) {
+#ifdef VERBOSE_II
+                    std::cout << "\t\t" << l_linenumber[li_id] << std::endl;
+#endif
+                    used = true;
+                    agg += (l_extendedprice[li_id] * (one - l_discount[li_id]));
+                  }
+                }
+                if (used)
+                  entries.emplace_back(
+                      make_tuple(o_orderkey[order_id], o_orderdate[order_id],
+                                 o_shippriority[order_id], agg));
+              }
+            }
+          }
+        }
+      });
+#ifdef VERBOSE
+  cout << "Preparing results" << endl;
+#endif
+  // --- output
+  auto& result = resources.query->result;
+  auto revAttr = result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+  auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+  auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+  auto prioAttr =
+      result->addAttribute("o_shippriority", sizeof(types::Integer));
+#ifdef VERBOSE_OUTPUT
+  std::mutex io_lock;
+#endif
+  // write aggregates to result
+  tbb::parallel_for(entries1.range(), [&](const auto& r) {
+    for (auto& entries : r) {
       auto n = entries.size();
-      n_t.fetch_add(n, std::memory_order_relaxed);
       auto block = result->createBlock(n);
       auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
       auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
       auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
       auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
-      for (auto block : entries)
-         for (auto& entry : block) {
-            *order++ = get<0>(entry.k);
-            *date++ = get<1>(entry.k);
-            *prio++ = get<2>(entry.k);
-            *rev++ = entry.v;
+      for (auto& entry : entries) {
+        *order++ = get<0>(entry);
+        *date++ = get<1>(entry);
+        *prio++ = get<2>(entry);
+        *rev++ = get<3>(entry);
 #ifdef VERBOSE_OUTPUT
-            {
-               std::unique_lock<std::mutex> lk(io_lock);
-               cout << "^\t" << get<0>(entry.k) << "\t" << get<1>(entry.k)
-                    << "\t" << get<2>(entry.k) << "\t" << (entry.v) << endl;
-            }
+        {
+          std::unique_lock<std::mutex> lk(io_lock);
+          cout << "+\t" << get<0>(entry) << "\t" << get<1>(entry) << "\t"
+               << get<2>(entry) << "\t" << get<3>(entry) << endl;
+        }
 #endif
-         }
-      block.addedElements(n);
-   });
-
-#ifdef VERBOSE_I
-   cout << "end q3_hyper" << endl;
-#endif
-
-   leaveQuery(nrThreads);
-
-#ifdef VERBOSE
-   cout << "Customer count " << found1 << endl;
-   cout << "Order count " << found2 << endl;
-   cout << "size :" << n_t << endl;
-
-#endif
-   return move(resources.query);
-}
-NOVECTORIZE std::unique_ptr<runtime::Query>
-q3_hyper_index(runtime::Database& db, size_t nrThreads) {
-#ifdef VERBOSE_I
-   cout << "hi from q3_hyper index" << endl;
-#endif
-   // --- aggregates
-   auto resources = initQuery(nrThreads);
-   // --- constants
-   auto c1 = types::Date::castString("1995-03-15");
-   auto c2 = types::Date::castString("1995-03-15");
-   string b = "BUILDING";
-   auto c3 = types::Char<10>::castString(b.data(), b.size());
-
-   auto& cu = db["customer"];
-   auto& ord = db["orders"];
-   auto& li = db["lineitem"];
-   // indexes
-   auto& indx = db.getindex("cust_ord");
-   auto& indx_val = db.getindex("cust_ord_vals");
-   auto& iord = db.getindex("ord_li");
-   auto& iord_val = db.getindex("ord_li_vals");
-
-   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
-   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
-   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-   auto l_shipdate = li["l_shipdate"].data<types::Date>();
-   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
-   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
-   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
-
-#ifdef VERBOSE_II
-   auto c_custkey = cu["c_custkey"].data<types::Integer>();
-   auto l_linenumber = li["l_linenumber"].data<types::Integer>();
-#endif
-
-   const size_t morselSize = 100;
-   const auto one = types::Numeric<12, 2>::castString("1.00");
-
-   tbb::enumerable_thread_specific<std::vector<std::tuple<
-       types::Integer, types::Date, types::Integer, types::Numeric<12, 4>>>>
-       entries1;
-
-   tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, cu.nrTuples, morselSize),
-       [&](const tbb::blocked_range<size_t>& r) {
-          auto& entries = entries1.local();
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             // std::cout << c_custkey[i] << std::endl;
-             if (c_mktsegment[i] == c3) {
-#ifdef VERBOSE_II
-                std::cout << c_custkey[i] << std::endl;
-#endif
-                size_t b = (i > 0) ? indx[i - 1] : 0;
-                size_t e = indx[i];
-
-                for (size_t j = b; j < e; j++) {
-                   size_t order_id = indx_val[j];
-                   //     std::cout << "-\t" << o_orderkey[order_id] <<
-                   //     std::endl;
-                   if (o_orderdate[order_id] < c1) {
-#ifdef VERBOSE_II
-                      std::cout << "\t" << o_orderkey[order_id] << std::endl;
-#endif
-
-                      // do not add it to the hash table
-                      // we can compute the value now
-
-                      size_t order_begin =
-                          (order_id > 0) ? iord[order_id - 1] : 0;
-                      size_t order_end = iord[order_id];
-                      types::Numeric<12, 4> agg = 0;
-                      bool used = false;
-                      for (size_t k = order_begin; k < order_end; k++) {
-                         auto li_id = iord_val[k];
-
-                         if (l_shipdate[li_id] > c2) {
-#ifdef VERBOSE_II
-                            std::cout << "\t\t" << l_linenumber[li_id]
-                                      << std::endl;
-#endif
-                            used = true;
-                            agg += (l_extendedprice[li_id] *
-                                    (one - l_discount[li_id]));
-                         }
-                      }
-                      if (used)
-                         entries.emplace_back(make_tuple(
-                             o_orderkey[order_id], o_orderdate[order_id],
-                             o_shippriority[order_id], agg));
-                   }
-                }
-             }
-          }
-       });
-#ifdef VERBOSE
-   cout << "Preparing results" << endl;
-#endif
-   // --- output
-   auto& result = resources.query->result;
-   auto revAttr =
-       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
-   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
-   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
-   auto prioAttr =
-       result->addAttribute("o_shippriority", sizeof(types::Integer));
-#ifdef VERBOSE_OUTPUT
-   std::mutex io_lock;
-#endif
-   // write aggregates to result
-   tbb::parallel_for(entries1.range(), [&](const auto& r) {
-      for (auto& entries : r) {
-
-         auto n = entries.size();
-         auto block = result->createBlock(n);
-         auto rev =
-             reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
-         auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
-         auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
-         auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
-         for (auto& entry : entries) {
-            *order++ = get<0>(entry);
-            *date++ = get<1>(entry);
-            *prio++ = get<2>(entry);
-            *rev++ = get<3>(entry);
-#ifdef VERBOSE_OUTPUT
-            {
-               std::unique_lock<std::mutex> lk(io_lock);
-               cout << "+\t" << get<0>(entry) << "\t" << get<1>(entry) << "\t"
-                    << get<2>(entry) << "\t" << get<3>(entry) << endl;
-            }
-#endif
-         }
-         block.addedElements(n);
       }
-   });
+      block.addedElements(n);
+    }
+  });
 #ifdef VERBOSE
-   cout << "size" << n << endl;
+  cout << "size" << n << endl;
 #endif
 
-   leaveQuery(nrThreads);
+  leaveQuery(nrThreads);
 #ifdef VERBOSE_I
-   cout << "q3_hyper index" << endl;
+  cout << "q3_hyper index" << endl;
 #endif
 
-   return move(resources.query);
+  return move(resources.query);
 }
 
 NOVECTORIZE std::unique_ptr<runtime::Query> q3_hyper(Database& db,
                                                      size_t nrThreads) {
-
 // --- aggregates
 #ifdef VERBOSE_I
-   cout << "hi from q3_hyper" << endl;
+  cout << "hi from q3_hyper" << endl;
 #endif
-   auto resources = initQuery(nrThreads);
+  auto resources = initQuery(nrThreads);
 
-   // --- constants
-   auto c1 = types::Date::castString("1995-03-15");
-   auto c2 = types::Date::castString("1995-03-15");
-   string b = "BUILDING";
-   auto c3 = types::Char<10>::castString(b.data(), b.size());
+  // --- constants
+  auto c1 = types::Date::castString("1995-03-15");
+  auto c2 = types::Date::castString("1995-03-15");
+  string b = "BUILDING";
+  auto c3 = types::Char<10>::castString(b.data(), b.size());
 
-   auto& cu = db["customer"];
-   auto& ord = db["orders"];
-   auto& li = db["lineitem"];
+  auto& cu = db["customer"];
+  auto& ord = db["orders"];
+  auto& li = db["lineitem"];
 
-   auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
-   auto c_custkey = cu["c_custkey"].data<types::Integer>();
-   auto o_custkey = ord["o_custkey"].data<types::Integer>();
-   auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
-   auto o_orderdate = ord["o_orderdate"].data<types::Date>();
-   auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
-   auto l_orderkey = li["l_orderkey"].data<types::Integer>();
-   auto l_shipdate = li["l_shipdate"].data<types::Date>();
-   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
-   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto c_mktsegment = cu["c_mktsegment"].data<types::Char<10>>();
+  auto c_custkey = cu["c_custkey"].data<types::Integer>();
+  auto o_custkey = ord["o_custkey"].data<types::Integer>();
+  auto o_orderkey = ord["o_orderkey"].data<types::Integer>();
+  auto o_orderdate = ord["o_orderdate"].data<types::Date>();
+  auto o_shippriority = ord["o_shippriority"].data<types::Integer>();
+  auto l_orderkey = li["l_orderkey"].data<types::Integer>();
+  auto l_shipdate = li["l_shipdate"].data<types::Date>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
 
-   using hash = runtime::CRC32Hash;
-   using range = tbb::blocked_range<size_t>;
+  using hash = runtime::CRC32Hash;
+  using range = tbb::blocked_range<size_t>;
 
-   const auto add = [](const size_t& a, const size_t& b) { return a + b; };
-   const size_t morselSize = 100000;
+  const auto add = [](const size_t& a, const size_t& b) { return a + b; };
+  const size_t morselSize = 100000;
 
-   // build ht for first join
-   Hashset<types::Integer, hash> ht1;
-   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
-       entries1;
-   auto found1 = tbb::parallel_reduce(
-       range(0, cu.nrTuples, morselSize), 0,
-       [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
-          auto found = f;
-          auto& entries = entries1.local();
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             if (c_mktsegment[i] == c3) {
+  // build ht for first join
+  Hashset<types::Integer, hash> ht1;
+  tbb::enumerable_thread_specific<runtime::Stack<decltype(ht1)::Entry>>
+      entries1;
+  auto found1 = tbb::parallel_reduce(
+      range(0, cu.nrTuples, morselSize), 0,
+      [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
+        auto found = f;
+        auto& entries = entries1.local();
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          if (c_mktsegment[i] == c3) {
 #ifdef VERBOSE_II
-                std::cout << c_custkey[i] << std::endl;
+            std::cout << c_custkey[i] << std::endl;
 #endif
 
-                entries.emplace_back(ht1.hash(c_custkey[i]), c_custkey[i]);
-                found++;
-             }
+            entries.emplace_back(ht1.hash(c_custkey[i]), c_custkey[i]);
+            found++;
           }
-          return found;
-       },
-       add);
-   ht1.setSize(found1);
-   parallel_insert(entries1, ht1);
+        }
+        return found;
+      },
+      add);
+  ht1.setSize(found1);
+  parallel_insert(entries1, ht1);
 
-   // join and build second ht
-   Hashmapx<types::Integer, std::tuple<types::Date, types::Integer>, hash> ht2;
-   tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
-       entries2;
-   auto found2 = tbb::parallel_reduce(
-       range(0, ord.nrTuples, morselSize), 0,
-       [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
-          auto& entries = entries2.local();
-          auto found = f;
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i)
-             if (o_orderdate[i] < c1 && ht1.contains(o_custkey[i])) {
+  // join and build second ht
+  Hashmapx<types::Integer, std::tuple<types::Date, types::Integer>, hash> ht2;
+  tbb::enumerable_thread_specific<runtime::Stack<decltype(ht2)::Entry>>
+      entries2;
+  auto found2 = tbb::parallel_reduce(
+      range(0, ord.nrTuples, morselSize), 0,
+      [&](const tbb::blocked_range<size_t>& r, const size_t& f) {
+        auto& entries = entries2.local();
+        auto found = f;
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i)
+          if (o_orderdate[i] < c1 && ht1.contains(o_custkey[i])) {
 #ifdef VERBOSE_II
-                std::cout << "\t" << o_custkey[i] << "\t" << o_orderkey[i]
-                          << std::endl;
+            std::cout << "\t" << o_custkey[i] << "\t" << o_orderkey[i]
+                      << std::endl;
 #endif
-                entries.emplace_back(
-                    ht2.hash(o_orderkey[i]), o_orderkey[i],
-                    make_tuple(o_orderdate[i], o_shippriority[i]));
-                found++;
-             }
-          return found;
-       },
-       add);
-   ht2.setSize(found2);
-   parallel_insert(entries2, ht2);
-
-   const auto one = types::Numeric<12, 2>::castString("1.00");
-   const auto zero = types::Numeric<12, 4>::castString("0.00");
-
-   tbb::enumerable_thread_specific<
-       Hashmapx<std::tuple<types::Integer, types::Date, types::Integer>,
-                types::Numeric<12, 4>, hash, false>>
-       groups;
-
-   auto groupOp =
-       make_GroupBy<std::tuple<types::Integer, types::Date, types::Integer>,
-                    types::Numeric<12, 4>, hash>(
-           [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
-
-   // preaggregation
-   tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
-       [&](const tbb::blocked_range<size_t>& r) {
-          auto locals = groupOp.preAggLocals();
-
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             decltype(ht2)::value_type* v;
-             if (l_shipdate[i] > c2 && (v = ht2.findOne(l_orderkey[i]))) {
-                locals.consume(
-                    make_tuple(l_orderkey[i], get<0>(*v), get<1>(*v)),
-                    l_extendedprice[i] * (one - l_discount[i]));
-             }
+            entries.emplace_back(ht2.hash(o_orderkey[i]), o_orderkey[i],
+                                 make_tuple(o_orderdate[i], o_shippriority[i]));
+            found++;
           }
-       });
+        return found;
+      },
+      add);
+  ht2.setSize(found2);
+  parallel_insert(entries2, ht2);
+
+  const auto one = types::Numeric<12, 2>::castString("1.00");
+  const auto zero = types::Numeric<12, 4>::castString("0.00");
+
+  tbb::enumerable_thread_specific<
+      Hashmapx<std::tuple<types::Integer, types::Date, types::Integer>,
+               types::Numeric<12, 4>, hash, false>>
+      groups;
+
+  auto groupOp =
+      make_GroupBy<std::tuple<types::Integer, types::Date, types::Integer>,
+                   types::Numeric<12, 4>, hash>(
+          [](auto& acc, auto&& value) { acc += value; }, zero, nrThreads);
+
+  // preaggregation
+  tbb::parallel_for(
+      tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+      [&](const tbb::blocked_range<size_t>& r) {
+        auto locals = groupOp.preAggLocals();
+
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          decltype(ht2)::value_type* v;
+          if (l_shipdate[i] > c2 && (v = ht2.findOne(l_orderkey[i]))) {
+            locals.consume(make_tuple(l_orderkey[i], get<0>(*v), get<1>(*v)),
+                           l_extendedprice[i] * (one - l_discount[i]));
+          }
+        }
+      });
 #ifdef VERBOSE_OUTPUT
-   std::mutex io_lock;
+  std::mutex io_lock;
 #endif
-   // --- output
-   auto& result = resources.query->result;
-   auto revAttr =
-       result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
-   auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
-   auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
-   auto prioAttr =
-       result->addAttribute("o_shippriority", sizeof(types::Integer));
-   std::atomic<size_t> n_t;
-   groupOp.forallGroups([&](auto& entries) {
-      // write aggregates to result
-      auto n = entries.size();
-      n_t.fetch_add(n, std::memory_order_relaxed);
-      auto block = result->createBlock(n);
-      auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
-      auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
-      auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
-      auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
-      for (auto block : entries)
-         for (auto& entry : block) {
-            *order++ = get<0>(entry.k);
-            *date++ = get<1>(entry.k);
-            *prio++ = get<2>(entry.k);
-            *rev++ = entry.v;
+  // --- output
+  auto& result = resources.query->result;
+  auto revAttr = result->addAttribute("revenue", sizeof(types::Numeric<12, 4>));
+  auto orderAttr = result->addAttribute("l_orderkey", sizeof(types::Integer));
+  auto dateAttr = result->addAttribute("o_orderdate", sizeof(types::Date));
+  auto prioAttr =
+      result->addAttribute("o_shippriority", sizeof(types::Integer));
+  std::atomic<size_t> n_t;
+  groupOp.forallGroups([&](auto& entries) {
+    // write aggregates to result
+    auto n = entries.size();
+    n_t.fetch_add(n, std::memory_order_relaxed);
+    auto block = result->createBlock(n);
+    auto rev = reinterpret_cast<types::Numeric<12, 4>*>(block.data(revAttr));
+    auto order = reinterpret_cast<types::Integer*>(block.data(orderAttr));
+    auto date = reinterpret_cast<types::Date*>(block.data(dateAttr));
+    auto prio = reinterpret_cast<types::Integer*>(block.data(prioAttr));
+    for (auto block : entries)
+      for (auto& entry : block) {
+        *order++ = get<0>(entry.k);
+        *date++ = get<1>(entry.k);
+        *prio++ = get<2>(entry.k);
+        *rev++ = entry.v;
 #ifdef VERBOSE_OUTPUT
-            {
-               std::unique_lock<std::mutex> lk(io_lock);
-               cout << "^\t" << get<0>(entry.k) << "\t" << get<1>(entry.k)
-                    << "\t" << get<2>(entry.k) << "\t" << (entry.v) << endl;
-            }
+        {
+          std::unique_lock<std::mutex> lk(io_lock);
+          cout << "^\t" << get<0>(entry.k) << "\t" << get<1>(entry.k) << "\t"
+               << get<2>(entry.k) << "\t" << (entry.v) << endl;
+        }
 #endif
-         }
-      block.addedElements(n);
-   });
+      }
+    block.addedElements(n);
+  });
 
 #ifdef VERBOSE_I
-   cout << "end q3_hyper" << endl;
+  cout << "end q3_hyper" << endl;
 #endif
 
-   leaveQuery(nrThreads);
+  leaveQuery(nrThreads);
 
 #ifdef VERBOSE
-   cout << "Customer count " << found1 << endl;
-   cout << "Order count " << found2 << endl;
-   cout << "size :" << n_t << endl;
+  cout << "Customer count " << found1 << endl;
+  cout << "Order count " << found2 << endl;
+  cout << "size :" << n_t << endl;
 
 #endif
-   return move(resources.query);
+  return move(resources.query);
 }
 
 std::unique_ptr<Q3Builder::Q3> Q3Builder::getQuery() {
-   using namespace vectorwise;
-   auto result = Result();
-   previous = result.resultWriter.shared.result->participate();
-   auto r = make_unique<Q3>();
-   auto customer = Scan("customer");
-   Select(Expression().addOp(
-       BF(primitives::sel_equal_to_Char_10_col_Char_10_val), //
-       Buffer(sel_cust, sizeof(pos_t)),                      //
-       Column(customer, "c_mktsegment"),                     //
-       Value(&r->c1)));                                      //
-   auto order = Scan("orders");
-   Select(Expression().addOp(BF(primitives::sel_less_Date_col_Date_val), //
-                             Buffer(sel_order, sizeof(pos_t)),           //
-                             Column(order, "o_orderdate"),               //
-                             Value(&r->c2)));
-   HashJoin(Buffer(cust_ord, sizeof(pos_t)), conf.joinAll())
-       .setProbeSelVector(Buffer(sel_order), conf.joinSel())
-       .addBuildKey(Column(customer, "c_custkey"),       //
-                    Buffer(sel_cust),                    //
-                    conf.hash_sel_int32_t_col(),         //
-                    primitives::scatter_sel_int32_t_col) //
-       .addProbeKey(Column(order, "o_custkey"),          //
-                    Buffer(sel_order),                   //
-                    conf.hash_sel_int32_t_col(),         //
-                    primitives::keys_equal_int32_t_col);
-   auto lineitem = Scan("lineitem");
-   Select(Expression().addOp(BF(primitives::sel_greater_Date_col_Date_val), //
-                             Buffer(sel_lineitem, sizeof(pos_t)),           //
-                             Column(lineitem, "l_shipdate"),                //
-                             Value(&r->c3)));
-   HashJoin(Buffer(j1_lineitem, sizeof(pos_t)), conf.joinAll()) //
-       .setProbeSelVector(Buffer(sel_lineitem), conf.joinSel())
-       .addBuildKey(Column(order, "o_orderkey"), //
-                    Buffer(cust_ord),            //
-                    conf.hash_sel_int32_t_col(), //
-                    primitives::scatter_sel_int32_t_col)
-       .addBuildValue(Column(order, "o_orderdate"), Buffer(cust_ord),
-                      primitives::scatter_sel_Date_col,
-                      Buffer(o_orderdate, sizeof(types::Date)),
-                      primitives::gather_col_Date_col)
-       .addBuildValue(Column(order, "o_shippriority"), Buffer(cust_ord),
-                      primitives::scatter_sel_int32_t_col,
-                      Buffer(o_shippriority, sizeof(types::Integer)),
-                      primitives::gather_col_int32_t_col)
-       .addProbeKey(Column(lineitem, "l_orderkey"), //
-                    Buffer(sel_lineitem),           //
-                    conf.hash_sel_int32_t_col(),    //
-                    primitives::keys_equal_int32_t_col);
-   // build value o_orderdate, o_shippriority
-   Project().addExpression(
-       Expression() //
-           .addOp(primitives::proj_sel_minus_int64_t_val_int64_t_col,
-                  Buffer(j1_lineitem), //
-                  Buffer(result_proj_minus, sizeof(int64_t)), Value(&r->one),
-                  Column(lineitem, "l_discount"))
-           .addOp(primitives::proj_multiplies_sel_int64_t_col_int64_t_col,
-                  Buffer(j1_lineitem),                     //
-                  Buffer(result_project, sizeof(int64_t)), //
-                  Column(lineitem, "l_extendedprice"),
-                  Buffer(result_proj_minus, sizeof(int64_t))));
-   // keys: o_orderdate, o_shippriority, l_orderkey
-   // sum: revenue
-   HashGroup()
-       .pushKeySelVec(Buffer(j1_lineitem),
-                      Buffer(j1_lineitem_grouped, sizeof(pos_t)))
-       .addKey(Column(lineitem, "l_orderkey"), Buffer(j1_lineitem),
-               conf.hash_sel_int32_t_col(),
-               primitives::keys_not_equal_sel_int32_t_col,
-               primitives::partition_by_key_sel_int32_t_col,
-               Buffer(j1_lineitem_grouped, sizeof(pos_t)),
-               primitives::scatter_sel_int32_t_col,
-               primitives::keys_not_equal_row_int32_t_col,
-               primitives::partition_by_key_row_int32_t_col,
-               primitives::scatter_sel_row_int32_t_col,
-               primitives::gather_val_int32_t_col,
-               Buffer(l_orderkey, sizeof(int32_t)))
-       .addKey(Buffer(o_orderdate),
-               primitives::rehash_Date_col, // conf.rehash_Date_col(),
-               primitives::keys_not_equal_Date_col,
-               primitives::partition_by_key_Date_col,
-               primitives::scatter_sel_Date_col,
-               primitives::keys_not_equal_row_Date_col,
-               primitives::partition_by_key_row_Date_col,
-               primitives::scatter_sel_row_Date_col,
-               primitives::gather_val_Date_col, Buffer(o_orderdate))
-       .addKey(Buffer(o_shippriority), conf.rehash_int32_t_col(),
-               primitives::keys_not_equal_int32_t_col,
-               primitives::partition_by_key_int32_t_col,
-               primitives::scatter_sel_int32_t_col,
-               primitives::keys_not_equal_row_int32_t_col,
-               primitives::partition_by_key_row_int32_t_col,
-               primitives::scatter_sel_row_int32_t_col,
-               primitives::gather_val_int32_t_col, Buffer(o_shippriority))
-       .addValue(Buffer(result_project), primitives::aggr_init_plus_int64_t_col,
-                 primitives::aggr_plus_int64_t_col,
-                 primitives::aggr_row_plus_int64_t_col,
-                 primitives::gather_val_int64_t_col, Buffer(result_project));
+  using namespace vectorwise;
+  auto result = Result();
+  previous = result.resultWriter.shared.result->participate();
+  auto r = make_unique<Q3>();
+  auto customer = Scan("customer");
+  Select(Expression().addOp(
+      BF(primitives::sel_equal_to_Char_10_col_Char_10_val),  //
+      Buffer(sel_cust, sizeof(pos_t)),                       //
+      Column(customer, "c_mktsegment"),                      //
+      Value(&r->c1)));                                       //
+  auto order = Scan("orders");
+  Select(Expression().addOp(BF(primitives::sel_less_Date_col_Date_val),  //
+                            Buffer(sel_order, sizeof(pos_t)),            //
+                            Column(order, "o_orderdate"),                //
+                            Value(&r->c2)));
+  HashJoin(Buffer(cust_ord, sizeof(pos_t)), conf.joinAll())
+      .setProbeSelVector(Buffer(sel_order), conf.joinSel())
+      .addBuildKey(Column(customer, "c_custkey"),        //
+                   Buffer(sel_cust),                     //
+                   conf.hash_sel_int32_t_col(),          //
+                   primitives::scatter_sel_int32_t_col)  //
+      .addProbeKey(Column(order, "o_custkey"),           //
+                   Buffer(sel_order),                    //
+                   conf.hash_sel_int32_t_col(),          //
+                   primitives::keys_equal_int32_t_col);
+  auto lineitem = Scan("lineitem");
+  Select(Expression().addOp(BF(primitives::sel_greater_Date_col_Date_val),  //
+                            Buffer(sel_lineitem, sizeof(pos_t)),            //
+                            Column(lineitem, "l_shipdate"),                 //
+                            Value(&r->c3)));
+  HashJoin(Buffer(j1_lineitem, sizeof(pos_t)), conf.joinAll())  //
+      .setProbeSelVector(Buffer(sel_lineitem), conf.joinSel())
+      .addBuildKey(Column(order, "o_orderkey"),  //
+                   Buffer(cust_ord),             //
+                   conf.hash_sel_int32_t_col(),  //
+                   primitives::scatter_sel_int32_t_col)
+      .addBuildValue(Column(order, "o_orderdate"), Buffer(cust_ord),
+                     primitives::scatter_sel_Date_col,
+                     Buffer(o_orderdate, sizeof(types::Date)),
+                     primitives::gather_col_Date_col)
+      .addBuildValue(Column(order, "o_shippriority"), Buffer(cust_ord),
+                     primitives::scatter_sel_int32_t_col,
+                     Buffer(o_shippriority, sizeof(types::Integer)),
+                     primitives::gather_col_int32_t_col)
+      .addProbeKey(Column(lineitem, "l_orderkey"),  //
+                   Buffer(sel_lineitem),            //
+                   conf.hash_sel_int32_t_col(),     //
+                   primitives::keys_equal_int32_t_col);
+  // build value o_orderdate, o_shippriority
+  Project().addExpression(
+      Expression()  //
+          .addOp(primitives::proj_sel_minus_int64_t_val_int64_t_col,
+                 Buffer(j1_lineitem),  //
+                 Buffer(result_proj_minus, sizeof(int64_t)), Value(&r->one),
+                 Column(lineitem, "l_discount"))
+          .addOp(primitives::proj_multiplies_sel_int64_t_col_int64_t_col,
+                 Buffer(j1_lineitem),                      //
+                 Buffer(result_project, sizeof(int64_t)),  //
+                 Column(lineitem, "l_extendedprice"),
+                 Buffer(result_proj_minus, sizeof(int64_t))));
+  // keys: o_orderdate, o_shippriority, l_orderkey
+  // sum: revenue
+  HashGroup()
+      .pushKeySelVec(Buffer(j1_lineitem),
+                     Buffer(j1_lineitem_grouped, sizeof(pos_t)))
+      .addKey(Column(lineitem, "l_orderkey"), Buffer(j1_lineitem),
+              conf.hash_sel_int32_t_col(),
+              primitives::keys_not_equal_sel_int32_t_col,
+              primitives::partition_by_key_sel_int32_t_col,
+              Buffer(j1_lineitem_grouped, sizeof(pos_t)),
+              primitives::scatter_sel_int32_t_col,
+              primitives::keys_not_equal_row_int32_t_col,
+              primitives::partition_by_key_row_int32_t_col,
+              primitives::scatter_sel_row_int32_t_col,
+              primitives::gather_val_int32_t_col,
+              Buffer(l_orderkey, sizeof(int32_t)))
+      .addKey(Buffer(o_orderdate),
+              primitives::rehash_Date_col,  // conf.rehash_Date_col(),
+              primitives::keys_not_equal_Date_col,
+              primitives::partition_by_key_Date_col,
+              primitives::scatter_sel_Date_col,
+              primitives::keys_not_equal_row_Date_col,
+              primitives::partition_by_key_row_Date_col,
+              primitives::scatter_sel_row_Date_col,
+              primitives::gather_val_Date_col, Buffer(o_orderdate))
+      .addKey(Buffer(o_shippriority), conf.rehash_int32_t_col(),
+              primitives::keys_not_equal_int32_t_col,
+              primitives::partition_by_key_int32_t_col,
+              primitives::scatter_sel_int32_t_col,
+              primitives::keys_not_equal_row_int32_t_col,
+              primitives::partition_by_key_row_int32_t_col,
+              primitives::scatter_sel_row_int32_t_col,
+              primitives::gather_val_int32_t_col, Buffer(o_shippriority))
+      .addValue(Buffer(result_project), primitives::aggr_init_plus_int64_t_col,
+                primitives::aggr_plus_int64_t_col,
+                primitives::aggr_row_plus_int64_t_col,
+                primitives::gather_val_int64_t_col, Buffer(result_project));
 
-   result.addValue("revenue", Buffer(result_project))
-       .addValue("o_shippriority", Buffer(o_shippriority))
-       .addValue("o_orderdate", Buffer(o_orderdate))
-       .addValue("l_orderkey", Buffer(l_orderkey))
-       .finalize();
+  result.addValue("revenue", Buffer(result_project))
+      .addValue("o_shippriority", Buffer(o_shippriority))
+      .addValue("o_orderdate", Buffer(o_orderdate))
+      .addValue("l_orderkey", Buffer(l_orderkey))
+      .finalize();
 
-   r->rootOp = popOperator();
-   return r;
+  r->rootOp = popOperator();
+  return r;
 }
 
 std::unique_ptr<runtime::Query> q3_vectorwise(Database& db, size_t nrThreads,
                                               size_t vectorSize) {
-   using namespace vectorwise;
-   WorkerGroup workers(nrThreads);
-   vectorwise::SharedStateManager shared;
-   std::unique_ptr<runtime::Query> result;
-   workers.run([&]() {
-      Q3Builder builder(db, shared, vectorSize);
-      auto query = builder.getQuery();
-      /* auto found = */ query->rootOp->next();
-      auto leader = barrier();
-      if (leader)
-         result = move(
-             dynamic_cast<ResultWriter*>(query->rootOp.get())->shared.result);
-   });
+  using namespace vectorwise;
+  WorkerGroup workers(nrThreads);
+  vectorwise::SharedStateManager shared;
+  std::unique_ptr<runtime::Query> result;
+  workers.run([&]() {
+    Q3Builder builder(db, shared, vectorSize);
+    auto query = builder.getQuery();
+    /* auto found = */ query->rootOp->next();
+    auto leader = barrier();
+    if (leader)
+      result =
+          move(dynamic_cast<ResultWriter*>(query->rootOp.get())->shared.result);
+  });
 
-   return result;
+  return result;
 }
