@@ -56,7 +56,8 @@ int main(int argc, char* argv[]) {
   bool clearCaches = false;
   if (argc > 3) nrThreads = atoi(argv[3]);
 
-  std::unordered_set<std::string> q = {"1h", "1h0", "1v", "1h1g"};
+  std::cout << "nrThreads" << nrThreads << "\n";
+  std::unordered_set<std::string> q = {"1h", "1h1g", "1h1gv", "1h1g4"};
   //{"1h", "1v", "3h", "3v", "5h",  "5v",
   //                                   "6h", "6v", "9h", "9v", "18h", "18v"};
 
@@ -74,7 +75,10 @@ int main(int argc, char* argv[]) {
          insert_iterator<decltype(q)>(q, q.begin()));
   }
 
+  part(tpch, nrThreads);
+
   tbb::task_scheduler_init scheduler(nrThreads);
+
   if (q.count("1h"))
     e.timeAndProfile(
         "q1 hyper     ", nrTuples(tpch, {"lineitem"}),
@@ -87,13 +91,35 @@ int main(int argc, char* argv[]) {
 
   if (q.count("1h1g"))
     e.timeAndProfile(
-        "q1 hyper  one group   ", nrTuples(tpch, {"lineitem"}),
+        "q1 hyper one group   ", nrTuples(tpch, {"lineitem"}),
         [&]() {
           if (clearCaches) clearOsCaches();
           auto result = q1_hyper_1g(tpch, nrThreads);
           escape(&result);
         },
         repetitions);
+
+  if (q.count("1h1gv"))
+    e.timeAndProfile(
+        "q1 hyper one group vectorized", nrTuples(tpch, {"lineitem"}),
+        [&]() {
+          if (clearCaches) clearOsCaches();
+          auto result = q1_hyper_1g_v(tpch, nrThreads);
+          escape(&result);
+        },
+        repetitions);
+
+  if (q.count("1h1g4"))
+    e.timeAndProfile(
+        "q1 hyper one group 4", nrTuples(tpch, {"lineitem"}),
+        [&]() {
+          if (clearCaches) clearOsCaches();
+          auto result = q1_hyper_4g(tpch, nrThreads);
+          escape(&result);
+        },
+        repetitions);
+
+#if 0
   if (q.count("1h0"))
     e.timeAndProfile(
         "q1 hyper  0   ", nrTuples(tpch, {"lineitem"}),
@@ -113,6 +139,7 @@ int main(int argc, char* argv[]) {
           escape(&result);
         },
         repetitions);
+
   if (q.count("3h"))
     e.timeAndProfile(
         "q3 hyper     ", nrTuples(tpch, {"customer", "orders", "lineitem"}),
@@ -213,6 +240,7 @@ int main(int argc, char* argv[]) {
           escape(&result);
         },
         repetitions);
+#endif
   scheduler.terminate();
   return 0;
 }

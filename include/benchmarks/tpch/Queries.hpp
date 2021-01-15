@@ -27,6 +27,7 @@ struct Q1Builder : public Query, private vectorwise::QueryBuilder {
     sum_charge,
     count_order
   };
+
   struct Q1 {
     types::Numeric<12, 2> one = types::Numeric<12, 2>::castString("1.00");
     types::Date c1 = types::Date::castString("1998-09-02");
@@ -42,11 +43,11 @@ std::unique_ptr<runtime::Query> q1_hyper(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency());
 
-std::unique_ptr<runtime::Query> q1_hyper_0(
+std::unique_ptr<runtime::Query> q1_hyper_1g(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency());
 
-std::unique_ptr<runtime::Query> q1_hyper_1g(
+NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_1g_v(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency());
 
@@ -54,6 +55,12 @@ std::unique_ptr<runtime::Query> q1_vectorwise(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency(),
     size_t vectorSize = 1024);
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_4g(
+    runtime::Database& db,
+    size_t nrThreads = std::thread::hardware_concurrency());
+
+void part(runtime::Database& db, size_t nrThreads);
 
 struct Q3Builder : private vectorwise::QueryBuilder {
   enum {

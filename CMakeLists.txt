@@ -16,6 +16,8 @@ set(CMAKE_CXX_COMPILER clang++)
 endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+# important for working under macos
+string(APPEND CMAKE_EXE_LINKER_FLAGS "-fsanitize=address") 
 
 OPTION(VECTORWISE_BRANCHING "Use branching vectorwise primitives" OFF)
 OPTION(AUTOVECTORIZE "Allow the compiler to autovectorize" OFF)
@@ -29,7 +31,10 @@ OPTION(HASH_SIZE_32 OFF)
 
 # Compiler flags for the different targets
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -mtune=native -std=c++17 -fPIC -Wall -Wextra -Wno-psabi -fno-omit-frame-pointer -Wno-unknown-pragmas ")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -Wall -Wextra -fno-omit-frame-pointer -march=native -fdiagnostics-color ")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -Wall -Wextra -fno-omit-frame-pointer -march=native -fdiagnostics-color")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -save-temps -fverbose-asm  ")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -save-temps -fverbose-asm ")
+
 
 
 if(LINUX)
@@ -42,7 +47,7 @@ endif(LINUX)
 
 
 string(REPLACE "-O2" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3  ")
 string(REPLACE "-O2" "" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}  -O3")
 

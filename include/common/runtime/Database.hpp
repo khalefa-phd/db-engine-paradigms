@@ -54,11 +54,16 @@ class Attribute {
   }
 };
 
+typedef std::vector<size_t> index_t;
+
 struct Relation {
   Relation() = default;
   Relation(Relation&&) = default;
   Relation(const Relation&) = delete;
   std::unordered_map<std::string, Attribute> attributes;
+
+  std::unordered_map<std::string, index_t> partitions;
+
   std::string name;
   size_t nrTuples;
   Attribute& operator[](std::string key);
