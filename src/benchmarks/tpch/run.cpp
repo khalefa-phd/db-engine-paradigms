@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
   if (argc > 3) nrThreads = atoi(argv[3]);
 
   std::cout << "nrThreads" << nrThreads << "\n";
-  std::unordered_set<std::string> q = {"1h", "1h1g", "1h1gv", "1h1g4"};
+  std::unordered_set<std::string> q = {"1h", "1h1g", "1h1gv", "1h1g4", "1h4"};
   //{"1h", "1v", "3h", "3v", "5h",  "5v",
   //                                   "6h", "6v", "9h", "9v", "18h", "18v"};
 
@@ -115,6 +115,16 @@ int main(int argc, char* argv[]) {
         [&]() {
           if (clearCaches) clearOsCaches();
           auto result = q1_hyper_4g(tpch, nrThreads);
+          escape(&result);
+        },
+        repetitions);
+
+  if (q.count("1h4"))
+    e.timeAndProfile(
+        "q1 hyper 4", nrTuples(tpch, {"lineitem"}),
+        [&]() {
+          if (clearCaches) clearOsCaches();
+          auto result = q1_hyper_4(tpch, nrThreads);
           escape(&result);
         },
         repetitions);

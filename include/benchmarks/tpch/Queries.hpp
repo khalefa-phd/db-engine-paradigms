@@ -47,7 +47,7 @@ std::unique_ptr<runtime::Query> q1_hyper_1g(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency());
 
-NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_1g_v(
+std::unique_ptr<runtime::Query> q1_hyper_1g_v(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency());
 
@@ -56,7 +56,11 @@ std::unique_ptr<runtime::Query> q1_vectorwise(
     size_t nrThreads = std::thread::hardware_concurrency(),
     size_t vectorSize = 1024);
 
-NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_4g(
+std::unique_ptr<runtime::Query> q1_hyper_4g(
+    runtime::Database& db,
+    size_t nrThreads = std::thread::hardware_concurrency());
+
+std::unique_ptr<runtime::Query> q1_hyper_4(
     runtime::Database& db,
     size_t nrThreads = std::thread::hardware_concurrency());
 

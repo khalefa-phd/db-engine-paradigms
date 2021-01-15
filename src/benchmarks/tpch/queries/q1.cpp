@@ -163,12 +163,6 @@ void part(Database& db, size_t nrThreads) {
   index_t& p1 = li.partitions["1"];
   index_t& p2 = li.partitions["2"];
   index_t& p3 = li.partitions["3"];
-  /*
-    li.partitions.insert({"0", p0});
-    li.partitions.insert({"1", p1});
-    li.partitions.insert({"2", p2});
-    li.partitions.insert({"3", p3});
-  */
   unordered_map<string, size_t> m;
 
   for (size_t i = 0; i != li.nrTuples; ++i) {
@@ -180,16 +174,7 @@ void part(Database& db, size_t nrThreads) {
     if (k == "R F") p1.push_back(i);
     if (k == "A F") p2.push_back(i);
     if (k == "N O") p3.push_back(i);
-
-    // R F 1478870
-    // A F 1478493
-    // N O 3004998
-    //  cout << k << "\n";
   }
-  // std::cout << "---------------------------------\n";
-  // for (auto it = m.cbegin(); it != m.cend(); ++it) {
-  //  std::cout << it->first << " " << it->second << " \n";
-  //}
   std::cout << "---------------------------------\n";
 
   cout << li.partitions["0"].size() << "\n";
@@ -572,7 +557,123 @@ std::unique_ptr<runtime::Query> q1_hyper_1g_v(Database& db, size_t nrThreads) {
 #endif
   return move(resources.query);
 }
+using namespace types;
+using namespace std;
+class res_t {
+ public:
+  using result_t = tuple<Numeric<12, 2>, Numeric<12, 2>, Numeric<12, 4>,
+                         Numeric<12, 6>, int64_t>;
 
+  result_t values[4];
+
+  res_t() {
+    auto id = make_tuple(Numeric<12, 2>(), Numeric<12, 2>(), Numeric<12, 4>(),
+                         Numeric<12, 6>(), int64_t(0));
+    for (int i = 0; i < 4; i++) values[i] = id;
+  }
+};
+
+NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_4(Database& db,
+                                                       size_t nrThreads) {
+  using namespace types;
+  using namespace std;
+#ifdef DEBUG
+  std::cout << "-----------------------q1_hyper\n";
+#endif
+  types::Date c1 = types::Date::castString("1998-09-02");
+  types::Numeric<12, 2> one = types::Numeric<12, 2>::castString("1.00");
+  auto& li = db["lineitem"];
+  auto l_returnflag = li["l_returnflag"].data<types::Char<1>>();
+  auto l_linestatus = li["l_linestatus"].data<types::Char<1>>();
+  auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+  auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+  auto l_tax = li["l_tax"].data<types::Numeric<12, 2>>();
+  auto l_quantity = li["l_quantity"].data<types::Numeric<12, 2>>();
+  auto l_shipdate = li["l_shipdate"].data<types::Date>();
+
+  auto resources = initQuery(nrThreads);
+
+  auto identity = make_tuple(Numeric<12, 2>(), Numeric<12, 2>(),
+                             Numeric<12, 4>(), Numeric<12, 6>(), int64_t(0));
+  res_t ident;
+
+  auto add = [](res_t acc, const res_t value) {
+    for (int i = 0; i < 4; i++) {
+      get<0>(acc.values[i]) += get<0>(value.values[i]);
+      get<1>(acc.values[i]) += get<1>(value.values[i]);
+      get<2>(acc.values[i]) += get<2>(value.values[i]);
+      get<3>(acc.values[i]) += get<3>(value.values[i]);
+      get<4>(acc.values[i]) += get<4>(value.values[i]);
+    }
+    return acc;
+  };
+
+  auto r = tbb::parallel_reduce(
+      // Index range for reduction
+      tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
+      // Identity element
+      ident,
+      // Reduce a subrange and partial sum
+      [&](tbb::blocked_range<size_t>& r, res_t partial_sum) -> res_t {
+        res_t pr = partial_sum;
+        for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
+          if (l_shipdate[i] <= c1) {
+            auto& p = pr.values[0];
+            get<0>(p) += l_quantity[i];
+            get<1>(p) += l_extendedprice[i];
+            auto disc_price = l_extendedprice[i] * (one - l_discount[i]);
+            get<2>(p) += disc_price;
+            auto charge = disc_price * (one + l_tax[i]);
+            get<3>(p) += charge;
+            get<4>(p) += 1;
+          }
+        }
+        return pr;
+      },
+      // Reduce two partial sums
+      add);
+
+  auto& result = resources.query->result;
+  auto retAttr = result->addAttribute("l_returnflag", sizeof(Char<1>));
+  auto statusAttr = result->addAttribute("l_linestatus", sizeof(Char<1>));
+  auto qtyAttr = result->addAttribute("sum_qty", sizeof(Numeric<12, 2>));
+  auto base_priceAttr =
+      result->addAttribute("sum_base_price", sizeof(Numeric<12, 2>));
+  auto disc_priceAttr =
+      result->addAttribute("sum_disc_price", sizeof(Numeric<12, 2>));
+  auto chargeAttr = result->addAttribute("sum_charge", sizeof(Numeric<12, 2>));
+  auto count_orderAttr = result->addAttribute("count_order", sizeof(int64_t));
+
+  auto n = 1;
+  auto block = result->createBlock(n);
+  auto qty = reinterpret_cast<Numeric<12, 2>*>(block.data(qtyAttr));
+  auto base_price =
+      reinterpret_cast<Numeric<12, 2>*>(block.data(base_priceAttr));
+  auto disc_price =
+      reinterpret_cast<Numeric<12, 4>*>(block.data(disc_priceAttr));
+  auto charge = reinterpret_cast<Numeric<12, 6>*>(block.data(chargeAttr));
+  auto count_order = reinterpret_cast<int64_t*>(block.data(count_orderAttr));
+  for (int i = 0; i < 4; i++) {
+    *qty++ = get<0>(r.values[i]);
+    *base_price++ = get<1>(r.values[i]);
+    *disc_price++ = get<2>(r.values[i]);
+    *charge++ = get<3>(r.values[i]);
+    *count_order++ = get<4>(r.values[i]);
+  }
+  block.addedElements(n);
+#ifdef DEBUG1
+  cout << "Added " << n << " elements "
+       << " \n";
+#endif
+
+  leaveQuery(nrThreads);
+// print result
+#ifdef DEBUG1
+  cout << " blocks:" << result->noofBlocks();
+  std::cout << "\n\n--------------END---------q1_hyper\n";
+#endif
+  return move(resources.query);
+}
 #if 0
 std::unique_ptr<Q1Builder::Q1> Q1Builder::getQuery() {
   using namespace vectorwise;
