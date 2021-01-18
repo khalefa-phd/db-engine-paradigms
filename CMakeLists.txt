@@ -162,6 +162,16 @@ target_include_directories(hyper PUBLIC
     PRIVATE src)
 target_link_libraries(hyper common)
 
+# offset library
+add_library(offset
+  src/offset/Types.cpp
+  )
+target_include_directories(offset PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    PRIVATE src)
+target_link_libraries(offset common)
+
 
 file(GLOB PRIMITIVES src/vectorwise/primitives/*.cpp)
 add_library(vectorwise

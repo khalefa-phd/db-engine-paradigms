@@ -36,6 +36,29 @@ using vectorwise::primitives::hash_t;
 //    l_returnflag,
 //    l_linestatus
 
+NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper_index(Database& db,
+                                                     size_t nrThreads) {
+   using namespace types;
+   using namespace std;
+
+   // aggregates
+   auto resources = initQuery(nrThreads);
+   // query parameter/s
+   types::Date c1 = types::Date::castString("1998-09-02");
+   // constants
+   types::Numeric<12, 2> one = types::Numeric<12, 2>::castString("1.00");
+   // TPC-H data
+   auto& li = db["lineitem"];
+   auto l_returnflag = li["l_returnflag"].data<types::Char<1>>();
+   auto l_linestatus = li["l_linestatus"].data<types::Char<1>>();
+   auto l_extendedprice = li["l_extendedprice"].data<types::Numeric<12, 2>>();
+   auto l_discount = li["l_discount"].data<types::Numeric<12, 2>>();
+   auto l_tax = li["l_tax"].data<types::Numeric<12, 2>>();
+   auto l_quantity = li["l_quantity"].data<types::Numeric<12, 2>>();
+   auto l_shipdate = li["l_shipdate"].data<types::Date>();
+  
+}
+
 NOVECTORIZE std::unique_ptr<runtime::Query> q1_hyper(Database& db,
                                                      size_t nrThreads) {
    using namespace types;
