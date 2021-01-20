@@ -1,6 +1,7 @@
 #pragma once
 #include "runtime/Database.hpp"
 #include <string>
+#include <map>
 
 namespace offset {
 namespace tpch {

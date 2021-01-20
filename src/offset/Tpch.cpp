@@ -27,9 +27,20 @@
 #include "vectorwise/defs.hpp"
 
 #include "offset/Tpch.hpp"
+#include "offset/Types.hpp"
 
 using namespace runtime;
 using namespace std;
+
+template<class T> inline std::vector<T> getValues(std::multimap<void*, int> mm) {
+   std::vector<T> keys;
+   unsigned i = 0;
+   for(auto it = mm.begin(), end = mm.end(); it != end; it = mm.upper_bound(it->first)) {
+	   auto key = offset::runtime_types::cast(reinterpret_cast<T>(it->first), i++);
+      keys.emplace_back(key);
+  }
+  return keys;
+}
 
 static inline double gettime() {
    struct timeval now_tv;
@@ -160,19 +171,25 @@ struct ColumnConfig {
    case Varchar_152: D(types::Varchar<152>)                                    \
    case Varchar_199: D(types::Varchar<199>)
 
-inline void parse(ColumnConfig& c, std::vector<void*>& col, std::string& line,
-                  unsigned& begin, unsigned& end) {
+typedef std::unordered_map<std::string, std::multimap<void*, int>> UniqueValuesMap;
+
+inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals, std::string& line,
+                  unsigned& begin, unsigned& end, uint64_t rowNumber) {
 
    const char* start = line.data() + begin;
    end = line.find_first_of('|', begin);
    size_t size = end - begin;
+   if(!uniqueVals->contains(columnMetaData.name)) { 
+      throw runtime_error("Column does not exist");
+   };
+   auto &uniqueValsInColumn = uniqueVals->at(columnMetaData.name);
 
 #define D(type)                                                                \
-   reinterpret_cast<std::vector<type>&>(col).emplace_back(                     \
-       type::castString(start, size));                                         \
+   reinterpret_cast<std::multimap<type,int>&>(uniqueValsInColumn).emplace(     \
+       type::castString(start, size), rowNumber);                              \
    break;
 
-   switch (algebraToRTType(c.type)) { EACHTYPE }
+   switch (algebraToRTType(columnMetaData.type)) { EACHTYPE }
 #undef D
    begin = end + 1;
 }
@@ -207,6 +224,19 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
 #undef D
 }
 
+void computeOffsets(std::vector<void*>& col, ColumnConfig& columnMetaData, std::multimap<void*, int> uniqueValsInCol) {
+#define D(type)                                       \
+   {                                                  \
+      auto values = getValues<type>(uniqueValsInCol); \
+      std::move(values.begin(), values.end(),         \
+      reinterpret_cast<std::vector<type>&>(col));     \
+      break;                                          \
+   }
+
+   switch (algebraToRTType(columnMetaData.type)) { EACHTYPE }
+#undef D
+}
+
 void parseColumns(runtime::Relation& relation, std::vector<ColumnConfigOwning>& cols,
                   std::string dir, std::string fileName) {
 
@@ -220,29 +250,39 @@ void parseColumns(runtime::Relation& relation, std::vector<ColumnConfigOwning>& 
    string cachedir = dir + "/cached/";
    if (!mkdir((dir + "/cached/").c_str(), 0777))
       throw runtime_error("Could not create dir 'cached': " + dir + "/cached/");
+  
    // Check if columns are already cached
    for (auto& col : colsC)
       if (!std::ifstream(cachedir + fileName + "_" + col.name))
          allColumnsMMaped = false;
 
    if (!allColumnsMMaped) {
-      std::vector<std::vector<void*>> attributes;
-      attributes.assign(colsC.size(), {});
+      UniqueValuesMap uniqueVals;
+      for (auto& col : colsC) uniqueVals.emplace(col.name, std::multimap<void*, int>());
       ifstream relationFile(dir + fileName + ".tbl");
       if (!relationFile.is_open())
          throw runtime_error("csv file not found: " + dir);
       string line;
       unsigned begin = 0, end;
-      uint64_t count = 0;
+      uint64_t rowNumber = 0;
       while (getline(relationFile, line)) {
-         count++;
+         rowNumber++;
          unsigned i = 0;
-         for (auto& col : colsC) parse(col, attributes[i++], line, begin, end);
+         for (auto& col : colsC) parse(col, &uniqueVals, line, begin, end, rowNumber);
          begin = 0;
       }
-      count = 0;
+      std::vector<std::vector<void*>> attributes;
+      std::vector<std::vector<void*>> offsets;
+      attributes.assign(colsC.size(), {});
+      offsets.assign(colsC.size(), {});
+      unsigned i = 0;
+      for (auto& colMetaData : colsC) {
+         computeOffsets(attributes[i++], colMetaData, uniqueVals.at(colMetaData.name));
+      }
+
+      rowNumber = 0;
       for (auto& col : colsC)
-         writeBinary(col, attributes[count++], cachedir + fileName);
+         writeBinary(col, attributes[rowNumber++], cachedir + fileName);
    }
    // load mmaped files
    size_t size = 0;

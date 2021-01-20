@@ -10,11 +10,25 @@ namespace runtime_types {
 class Integer : public types::Integer {
  public:
    int32_t value;
-   int32_t offset;
+   uint32_t offset;
    Integer() {}
-   Integer(int32_t value, int32_t offset)
-       : value(value), offset(offset) {}
+   Integer(int32_t value, uint32_t offset) : value(value), offset(offset) {}
 };
+template <unsigned len, unsigned precision>
+class Numeric : public types::Numeric {
+ public:
+   uint32_t offset;
+   Numeric(types::Integer x, uint32_t offset)
+       : value(x.value * numericShifts[precision]), offset(offset) {}
+   Numeric(Integer x)
+       : value(x.value * numericShifts[precision]), offset(x.offset) {}
+   Numeric(int64_t x, uint32_t offset) : value(x), offset(offset) {}
+};
+
+static Integer cast(types::Integer number, uint32_t offset);
+template <unsigned len, unsigned precision>
+static Numeric<len, precision> cast(types::Numeric<len, precision> number,
+                                    uint32_t offset);
 }; // namespace runtime_types
 
 namespace algebra_types {
