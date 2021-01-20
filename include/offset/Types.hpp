@@ -7,12 +7,18 @@
 namespace offset {
 
 namespace runtime_types {
+  
 class Integer : public types::Integer {
  public:
    int32_t value;
    uint32_t offset;
+
    Integer() {}
    Integer(int32_t value, uint32_t offset) : value(value), offset(offset) {}
+
+   inline bool operator==(const Integer& n) const {
+      return (value == n.value) && (offset == n.offset);
+   }
 };
 template <unsigned len, unsigned precision>
 class Numeric : public types::Numeric {
@@ -23,6 +29,10 @@ class Numeric : public types::Numeric {
    Numeric(Integer x)
        : value(x.value * numericShifts[precision]), offset(x.offset) {}
    Numeric(int64_t x, uint32_t offset) : value(x), offset(offset) {}
+
+   bool operator==(const Numeric<len, precision>& n) const {
+      return (value == n.value) && (offset == n.offset);
+   }
 };
 
 static Integer cast(types::Integer number, uint32_t offset);
