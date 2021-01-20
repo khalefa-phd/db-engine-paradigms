@@ -32,15 +32,21 @@
 using namespace runtime;
 using namespace std;
 
-template<class T> inline std::vector<T> getValues(std::multimap<void*, int> mm) {
+template<class T> inline std::vector<T> getValues(std::multimap<T, int> mm) {
    std::vector<T> keys;
    unsigned i = 0;
    for(auto it = mm.begin(), end = mm.end(); it != end; it = mm.upper_bound(it->first)) {
-	   auto key = offset::runtime_types::cast(reinterpret_cast<T>(it->first), i++);
+	   auto key = offset::runtime_types::cast(it->first, i++);
       keys.emplace_back(key);
-  }
-  return keys;
+   }
+   return keys;
 }
+
+/* template<class T> inline std::vector<unsigned> computeOffsets(std::vector<T> values, std::multimap<void*, int> ocurrences) {
+   for (auto value: values) {
+      ocurrences.equal_range()
+   }
+} */
 
 static inline double gettime() {
    struct timeval now_tv;
@@ -225,9 +231,9 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
 }
 
 void computeOffsets(std::vector<void*>& col, ColumnConfig& columnMetaData, std::multimap<void*, int> uniqueValsInCol) {
-#define D(type)                                       \
-   {                                                  \
-      auto values = getValues<type>(uniqueValsInCol); \
+#define D(type)                                                                                    \
+   {                                                                                               \
+      auto values = getValues<type>(reinterpret_cast<std::multimap<type, int>&>(uniqueValsInCol)); \
       std::move(values.begin(), values.end(),         \
       reinterpret_cast<std::vector<type>&>(col));     \
       break;                                          \
