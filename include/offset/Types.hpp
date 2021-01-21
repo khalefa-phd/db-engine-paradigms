@@ -8,6 +8,12 @@ namespace offset {
 
 namespace runtime_types {
   
+struct IntegerContainerCmp {
+  bool operator()(const types::Integer& lhs, const types::Integer& rhs) const {
+    return lhs == rhs;
+  }
+};
+
 class Integer : public types::Integer {
  public:
    int32_t value;

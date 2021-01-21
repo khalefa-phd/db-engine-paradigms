@@ -42,11 +42,15 @@ template<class T> inline std::vector<T> getValues(std::multimap<T, int> mm) {
    return keys;
 }
 
-/* template<class T> inline std::vector<unsigned> computeOffsets(std::vector<T> values, std::multimap<void*, int> ocurrences) {
-   for (auto value: values) {
-      ocurrences.equal_range()
+template<class T> inline std::vector<unsigned> computeOffsets(std::vector<T> values, std::multimap<T, int> ocurrences) {
+   unsigned i = 0;
+   std::vector<unsigned> row_indexes;
+   row_indexes.reserve(ocurrences.size());
+   for (auto& value: values) {
+      auto range = ocurrences.equal_range(value);
+      row_indexes.insert(row_indexes.end(), range.begin(), range.end());
    }
-} */
+}
 
 static inline double gettime() {
    struct timeval now_tv;
