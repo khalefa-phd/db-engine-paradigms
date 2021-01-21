@@ -1,5 +1,4 @@
-#ifndef Offset_Types
-#define Offset_Types
+#pragma once
 
 #include "common/algebra/Types.hpp"
 #include "common/runtime/Types.hpp"
@@ -26,14 +25,15 @@ class Integer : public types::Integer {
       return (value == n.value) && (offset == n.offset);
    }
 };
-template <unsigned len, unsigned precision>
-class Numeric : public types::Numeric {
+
+template <unsigned len, unsigned precision> class Numeric : public types::Numeric<len, precision> {
  public:
+   int64_t value;
    uint32_t offset;
    Numeric(types::Integer x, uint32_t offset)
-       : value(x.value * numericShifts[precision]), offset(offset) {}
+       : value(x.value * types::numericShifts[precision]), offset(offset) {}
    Numeric(Integer x)
-       : value(x.value * numericShifts[precision]), offset(x.offset) {}
+       : value(x.value * types::numericShifts[precision]), offset(x.offset) {}
    Numeric(int64_t x, uint32_t offset) : value(x), offset(offset) {}
 
    bool operator==(const Numeric<len, precision>& n) const {
@@ -42,8 +42,7 @@ class Numeric : public types::Numeric {
 };
 
 static Integer cast(types::Integer number, uint32_t offset);
-template <unsigned len, unsigned precision>
-static Numeric<len, precision> cast(types::Numeric<len, precision> number,
+template <unsigned len, unsigned precision> static Numeric<len, precision> cast(types::Numeric<len, precision> number,
                                     uint32_t offset);
 }; // namespace runtime_types
 
@@ -56,4 +55,3 @@ struct Integer : public algebra::Type {
 }; // namespace algebra_types
 
 }; // namespace offset
-#endif

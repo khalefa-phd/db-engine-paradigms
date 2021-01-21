@@ -6,7 +6,7 @@ namespace runtime_types {
 static Integer cast(types::Integer number, uint32_t offset) {
    return Integer(number.value, offset);
 }
-static Numeric<len, precision> cast(types::Numeric<len, precision> number,
+template <unsigned len, unsigned precision> static Numeric<len, precision> cast(types::Numeric<len, precision> number,
                                     uint32_t offset) {
    return Numeric<len, precision>(number.value, offset);
 }
