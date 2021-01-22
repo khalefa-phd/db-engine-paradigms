@@ -7,9 +7,12 @@ namespace offset {
 
 namespace runtime_types {
   
-struct IntegerContainerCmp {
+struct ContainerCmp {
   bool operator()(const types::Integer& lhs, const types::Integer& rhs) const {
     return lhs == rhs;
+  }
+  template <unsigned len, unsigned precision> bool operator()(const types::Numeric<len,precision>& lhs, const types::Numeric<len,precision>& rhs) const {
+     return lhs == rhs;
   }
 };
 
