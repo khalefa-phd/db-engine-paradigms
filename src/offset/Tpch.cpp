@@ -26,6 +26,7 @@
 #include "vectorwise/VectorAllocator.hpp"
 #include "vectorwise/defs.hpp"
 
+#include "offset/Database.hpp"
 #include "offset/Tpch.hpp"
 #include "offset/Types.hpp"
 
@@ -225,12 +226,22 @@ void writeBinary(ColumnConfig& col, std::vector<void*>& data,
 #undef D
 }
 
-// Overloaded function to write row indexes
-void writeBinary(ColumnConfig& col, std::vector<unsigned>& data,
-                 std::string path) {
-   auto name = path + "_" + col.name + std::string("_rowIndexes");                                       \
-   runtime::Vector<unsigned>::writeBinary(                                      \
-   name.data(), data);
+void writeBinary(ColumnConfig& col, offset::RowIndex& data, std::string path) {
+   std::ofstream file;
+   auto fname = path + "_" + col.name + "_rowIndex";
+   file.open(fname, std::ios::out | std::ios::binary);
+   if (!data.empty())
+      file.write(reinterpret_cast<char*>(&data[0]),
+                 data.size() * sizeof(data[0]));
+}
+
+bool readBinary(ColumnConfig& col, offset::RowIndex& data, std::string path) {
+   auto fname = path + "_" + col.name + "_rowIndex";
+   std::ifstream file(fname, std::ios::binary);
+   unsigned element;
+   while (file.read(reinterpret_cast<char*>(&element), sizeof(element)))
+      data.emplace_back(element);
+   return true;
 }
 
 size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
@@ -273,7 +284,7 @@ void computeOffsets(std::vector<void*>& col,
 #undef D
 }
 
-void parseColumns(runtime::Relation& relation,
+void parseColumns(offset::Relation& relation,
                   std::vector<ColumnConfigOwning>& cols, std::string dir,
                   std::string fileName) {
 
@@ -311,20 +322,21 @@ void parseColumns(runtime::Relation& relation,
          begin = 0;
       }
       std::vector<std::vector<void*>> attributes;
-      std::vector<std::vector<unsigned>> rowIndexes;
       attributes.assign(colsC.size(), {});
-      rowIndexes.assign(colsC.size(), {});
       unsigned i = 0;
       for (auto& colMetaData : colsC) {
          auto& colName = colMetaData.name;
-         computeOffsets(attributes[i], rowIndexes[i++], colMetaData,
+         auto& rowIndex = relation.getRowIndex(colName);
+         computeOffsets(attributes[i++], rowIndex, colMetaData,
                         uniqueVals.at(colName));
       }
 
       rowNumber = 0;
       for (auto& col : colsC) {
-         writeBinary(col, attributes[rowNumber], cachedir + fileName);
-         writeBinary(col, rowIndexes[rowNumber++], cachedir + fileName);
+         auto& colName = col.name;
+         auto& rowIndex = relation.getRowIndex(colName);
+         writeBinary(col, attributes[rowNumber++], cachedir + fileName);
+         writeBinary(col, rowIndex, cachedir + fileName);
       }
    }
    // load mmaped files
@@ -332,7 +344,13 @@ void parseColumns(runtime::Relation& relation,
    size_t diffs = 0;
    for (auto& col : colsC) {
       auto oldSize = size;
-      size = readBinary(relation, col, cachedir + fileName);
+      auto& colName = col.name;
+      auto& rowIndex = relation.getRowIndex(colName);
+      if (rowIndex.empty()) readBinary(col, rowIndex, cachedir + fileName);
+      size = rowIndex.size();
+      // Relation will store unique values with their respective offset,
+      // thus size may differ
+      readBinary(relation, col, cachedir + fileName);
       diffs += (oldSize != size);
    }
    if (diffs > 1)
@@ -350,7 +368,7 @@ configX(std::initializer_list<ColumnConfigOwning>&& l) {
 
 namespace offset {
 namespace tpch {
-void import(std::string dir, Database& db) {
+void import(std::string dir, offset::Database& db) {
    //--------------------------------------------------------------------------------
    // lineitem
    {
