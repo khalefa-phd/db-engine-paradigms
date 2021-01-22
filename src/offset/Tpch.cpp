@@ -32,23 +32,29 @@
 using namespace runtime;
 using namespace std;
 
-template<class T> inline std::vector<T> getValues(std::multimap<T, int> mm) {
+template <class T>
+inline std::vector<T> getValues(std::multimap<T, unsigned> mm) {
    std::vector<T> keys;
    unsigned i = 0;
-   for(auto it = mm.begin(), end = mm.end(); it != end; it = mm.upper_bound(it->first)) {
-	   auto key = offset::runtime_types::cast(it->first, i++);
+   for (auto it = mm.begin(), end = mm.end(); it != end;
+        it = mm.upper_bound(it->first)) {
+      auto key = offset::runtime_types::cast(it->first, i++);
       keys.emplace_back(key);
    }
    return keys;
 }
 
-template<class T> inline std::vector<unsigned> computeOffsets(std::vector<T> values, std::multimap<T, int> ocurrences) {
-   unsigned i = 0;
-   std::vector<unsigned> row_indexes;
-   row_indexes.reserve(ocurrences.size());
-   for (auto& value: values) {
-      auto range = ocurrences.equal_range(value);
-      row_indexes.insert(row_indexes.end(), range.begin(), range.end());
+template <class T>
+inline void computeRowIndexesAndFixOffsets(
+    std::vector<T>& values, std::vector<unsigned>& rowIndexes,
+    std::multimap<T, unsigned, offset::runtime_types::ContainerCmp>&
+        ocurrences) {
+   rowIndexes.reserve(ocurrences.size());
+   for (auto& value : values) {
+      auto valueOcurrences = ocurrences.equal_range(value);
+      rowIndexes.insert(rowIndexes.end(), valueOcurrences.begin(),
+                        valueOcurrences.end());
+      value.offset = rowIndexes.size();
    }
 }
 
@@ -181,22 +187,24 @@ struct ColumnConfig {
    case Varchar_152: D(types::Varchar<152>)                                    \
    case Varchar_199: D(types::Varchar<199>)
 
-typedef std::unordered_map<std::string, std::multimap<void*, int>> UniqueValuesMap;
+typedef std::unordered_map<std::string, std::multimap<void*, unsigned>>
+    UniqueValuesMap;
 
-inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals, std::string& line,
-                  unsigned& begin, unsigned& end, uint64_t rowNumber) {
+inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
+                  std::string& line, unsigned& begin, unsigned& end,
+                  uint64_t rowNumber) {
 
    const char* start = line.data() + begin;
    end = line.find_first_of('|', begin);
    size_t size = end - begin;
-   if(!uniqueVals->contains(columnMetaData.name)) { 
+   if (!uniqueVals->contains(columnMetaData.name)) {
       throw runtime_error("Column does not exist");
    };
-   auto &uniqueValsInColumn = uniqueVals->at(columnMetaData.name);
+   auto& uniqueValsInColumn = uniqueVals->at(columnMetaData.name);
 
 #define D(type)                                                                \
-   reinterpret_cast<std::multimap<type,int>&>(uniqueValsInColumn).emplace(     \
-       type::castString(start, size), rowNumber);                              \
+   reinterpret_cast<std::multimap<type, int>&>(uniqueValsInColumn)             \
+       .emplace(type::castString(start, size), rowNumber);                     \
    break;
 
    switch (algebraToRTType(columnMetaData.type)) { EACHTYPE }
@@ -217,6 +225,14 @@ void writeBinary(ColumnConfig& col, std::vector<void*>& data,
 #undef D
 }
 
+// Overloaded function to write row indexes
+void writeBinary(ColumnConfig& col, std::vector<unsigned>& data,
+                 std::string path) {
+   auto name = path + "_" + col.name + std::string("_rowIndexes");                                       \
+   runtime::Vector<unsigned>::writeBinary(                                      \
+   name.data(), data);
+}
+
 size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
 #define D(rt_type)                                                             \
    {                                                                           \
@@ -234,21 +250,32 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
 #undef D
 }
 
-void computeOffsets(std::vector<void*>& col, ColumnConfig& columnMetaData, std::multimap<void*, int> uniqueValsInCol) {
-#define D(type)                                                                                    \
-   {                                                                                               \
-      auto values = getValues<type>(reinterpret_cast<std::multimap<type, int>&>(uniqueValsInCol)); \
-      std::move(values.begin(), values.end(),         \
-      reinterpret_cast<std::vector<type>&>(col));     \
-      break;                                          \
+void computeOffsets(std::vector<void*>& col,
+                    std::vector<unsigned>& colRowIndexes,
+                    ColumnConfig& columnMetaData,
+                    std::multimap<void*, unsigned> uniqueValsInCol) {
+#define D(type)                                                                \
+   {                                                                           \
+      auto values = getValues<type>(                                           \
+          reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
+      std::move(values.begin(), values.end(),                                  \
+                reinterpret_cast<std::vector<type>&>(col));                    \
+      computeRowIndexesAndFixOffsets(                                          \
+          reinterpret_cast<std::vector<type>&>(col), colRowIndexes,            \
+          reinterpret_cast<std::multimap<                                      \
+              type, unsigned, offset::runtime_types::ContainerCmp>&>(          \
+              uniqueValsInCol));                                               \
+      break;                                                                   \
    }
 
    switch (algebraToRTType(columnMetaData.type)) { EACHTYPE }
+
 #undef D
 }
 
-void parseColumns(runtime::Relation& relation, std::vector<ColumnConfigOwning>& cols,
-                  std::string dir, std::string fileName) {
+void parseColumns(runtime::Relation& relation,
+                  std::vector<ColumnConfigOwning>& cols, std::string dir,
+                  std::string fileName) {
 
    std::vector<ColumnConfig> colsC;
    for (auto& col : cols) {
@@ -260,7 +287,7 @@ void parseColumns(runtime::Relation& relation, std::vector<ColumnConfigOwning>& 
    string cachedir = dir + "/cached/";
    if (!mkdir((dir + "/cached/").c_str(), 0777))
       throw runtime_error("Could not create dir 'cached': " + dir + "/cached/");
-  
+
    // Check if columns are already cached
    for (auto& col : colsC)
       if (!std::ifstream(cachedir + fileName + "_" + col.name))
@@ -268,7 +295,8 @@ void parseColumns(runtime::Relation& relation, std::vector<ColumnConfigOwning>& 
 
    if (!allColumnsMMaped) {
       UniqueValuesMap uniqueVals;
-      for (auto& col : colsC) uniqueVals.emplace(col.name, std::multimap<void*, int>());
+      for (auto& col : colsC)
+         uniqueVals.emplace(col.name, std::multimap<void*, unsigned>());
       ifstream relationFile(dir + fileName + ".tbl");
       if (!relationFile.is_open())
          throw runtime_error("csv file not found: " + dir);
@@ -278,21 +306,26 @@ void parseColumns(runtime::Relation& relation, std::vector<ColumnConfigOwning>& 
       while (getline(relationFile, line)) {
          rowNumber++;
          unsigned i = 0;
-         for (auto& col : colsC) parse(col, &uniqueVals, line, begin, end, rowNumber);
+         for (auto& col : colsC)
+            parse(col, &uniqueVals, line, begin, end, rowNumber);
          begin = 0;
       }
       std::vector<std::vector<void*>> attributes;
-      std::vector<std::vector<void*>> offsets;
+      std::vector<std::vector<unsigned>> rowIndexes;
       attributes.assign(colsC.size(), {});
-      offsets.assign(colsC.size(), {});
+      rowIndexes.assign(colsC.size(), {});
       unsigned i = 0;
       for (auto& colMetaData : colsC) {
-         computeOffsets(attributes[i++], colMetaData, uniqueVals.at(colMetaData.name));
+         auto& colName = colMetaData.name;
+         computeOffsets(attributes[i], rowIndexes[i++], colMetaData,
+                        uniqueVals.at(colName));
       }
 
       rowNumber = 0;
-      for (auto& col : colsC)
-         writeBinary(col, attributes[rowNumber++], cachedir + fileName);
+      for (auto& col : colsC) {
+         writeBinary(col, attributes[rowNumber], cachedir + fileName);
+         writeBinary(col, rowIndexes[rowNumber++], cachedir + fileName);
+      }
    }
    // load mmaped files
    size_t size = 0;
