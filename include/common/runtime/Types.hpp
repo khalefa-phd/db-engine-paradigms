@@ -196,7 +196,7 @@ template <unsigned maxLen>
 bool Varchar<maxLen>::operator<(const Varchar& other) const
 // Comparison
 {
-   int c = memcmp(value, other.value, min(len, other.len));
+   int c = memcmp(value, other.value, std::min(len, other.len));
    if (c < 0) return true;
    if (c > 0) return false;
    return len < other.len;
