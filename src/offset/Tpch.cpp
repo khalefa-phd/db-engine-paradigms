@@ -33,32 +33,6 @@
 using namespace runtime;
 using namespace std;
 
-template <class T>
-inline std::vector<T> getValues(std::multimap<T, unsigned> mm) {
-   std::vector<T> keys;
-   unsigned i = 0;
-   for (auto it = mm.begin(), end = mm.end(); it != end;
-        it = mm.upper_bound(it->first)) {
-      auto key = offset::runtime_types::cast(it->first, i++);
-      keys.emplace_back(key);
-   }
-   return keys;
-}
-
-template <class T>
-inline void computeRowIndexesAndFixOffsets(
-    std::vector<T>& values, std::vector<unsigned>& rowIndexes,
-    std::multimap<T, unsigned, offset::runtime_types::ContainerCmp>&
-        ocurrences) {
-   rowIndexes.reserve(ocurrences.size());
-   for (auto& value : values) {
-      auto valueOcurrences = ocurrences.equal_range(value);
-      rowIndexes.insert(rowIndexes.end(), valueOcurrences.begin(),
-                        valueOcurrences.end());
-      value.offset = rowIndexes.size();
-   }
-}
-
 static inline double gettime() {
    struct timeval now_tv;
    gettimeofday(&now_tv, NULL);
@@ -191,6 +165,34 @@ struct ColumnConfig {
 typedef std::unordered_map<std::string, std::multimap<void*, unsigned>>
     UniqueValuesMap;
 
+template <class T>
+inline std::vector<T> getValues(std::multimap<T, unsigned> mm) {
+   std::vector<T> keys;
+   for (auto it = mm.begin(), end = mm.end(); it != end;
+        it = mm.upper_bound(it->first)) {
+      auto key = it->first;
+      keys.emplace_back(key);
+   }
+   return keys;
+}
+
+template <class Type, class OffsetType>
+inline void computeRowIndexesAndFixOffsets(
+    ColumnConfig& columnMetaData, std::vector<Type>& values,
+    std::vector<void*>& col, std::vector<unsigned>& colRowIndexes,
+    std::multimap<Type, unsigned>& ocurrences) {
+
+   colRowIndexes.reserve(ocurrences.size());
+   for (auto value : values) {
+      auto range = ocurrences.equal_range(value);
+      auto offsetValue = OffsetType(value, colRowIndexes.size());
+      std::transform(
+          range.first, range.second, std::back_inserter(colRowIndexes),
+          [](std::pair<Type, unsigned> element) { return element.second; });
+      reinterpret_cast<vector<OffsetType>&>(col).emplace_back(offsetValue);
+   }
+}
+
 inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
                   std::string& line, unsigned& begin, unsigned& end,
                   uint64_t rowNumber) {
@@ -269,13 +271,9 @@ void computeOffsets(std::vector<void*>& col,
    {                                                                           \
       auto values = getValues<type>(                                           \
           reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
-      std::move(values.begin(), values.end(),                                  \
-                reinterpret_cast<std::vector<type>&>(col));                    \
-      computeRowIndexesAndFixOffsets(                                          \
-          reinterpret_cast<std::vector<type>&>(col), colRowIndexes,            \
-          reinterpret_cast<std::multimap<                                      \
-              type, unsigned, offset::runtime_types::ContainerCmp>&>(          \
-              uniqueValsInCol));                                               \
+      computeRowIndexesAndFixOffsets<type, offset::type>(                                    \
+          columnMetaData, values, col, colRowIndexes,                          \
+          reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
       break;                                                                   \
    }
 

@@ -165,6 +165,8 @@ target_link_libraries(hyper common)
 # offset library
 add_library(offset
   src/offset/Types.cpp
+  src/offset/Database.cpp
+  src/offset/Tpch.cpp
   )
 target_include_directories(offset PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
