@@ -132,35 +132,35 @@ struct ColumnConfig {
 };
 
 #define COMMA ,
-#define EACHTYPE                                                               \
-   case Integer: D(types::Integer)                                             \
-   case Numeric_12_2: D(types::Numeric<12 COMMA 2>)                            \
-   case Numeric_18_2: D(types::Numeric<18 COMMA 2>)                            \
-   case Date: D(types::Date)                                                   \
-   case Char_1: D(types::Char<1>)                                              \
-   case Char_6: D(types::Char<6>)                                              \
-   case Char_7: D(types::Char<7>)                                              \
-   case Char_9: D(types::Char<9>)                                              \
-   case Char_10: D(types::Char<10>)                                            \
-   case Char_11: D(types::Char<11>)                                            \
-   case Char_12: D(types::Char<12>)                                            \
-   case Char_15: D(types::Char<15>)                                            \
-   case Char_18: D(types::Char<18>)                                            \
-   case Char_22: D(types::Char<22>)                                            \
-   case Char_25: D(types::Char<25>)                                            \
-   case Varchar_11: D(types::Varchar<11>)                                      \
-   case Varchar_12: D(types::Varchar<12>)                                      \
-   case Varchar_22: D(types::Varchar<22>)                                      \
-   case Varchar_23: D(types::Varchar<23>)                                      \
-   case Varchar_25: D(types::Varchar<25>)                                      \
-   case Varchar_40: D(types::Varchar<40>)                                      \
-   case Varchar_44: D(types::Varchar<44>)                                      \
-   case Varchar_55: D(types::Varchar<55>)                                      \
-   case Varchar_79: D(types::Varchar<79>)                                      \
-   case Varchar_101: D(types::Varchar<101>)                                    \
-   case Varchar_117: D(types::Varchar<117>)                                    \
-   case Varchar_152: D(types::Varchar<152>)                                    \
-   case Varchar_199: D(types::Varchar<199>)
+#define APPLY_ACTION_TO_RTTYPE                                                 \
+   case Integer: ACTION_TO_APPLY(types::Integer)                               \
+   case Numeric_12_2: ACTION_TO_APPLY(types::Numeric<12 COMMA 2>)              \
+   case Numeric_18_2: ACTION_TO_APPLY(types::Numeric<18 COMMA 2>)              \
+   case Date: ACTION_TO_APPLY(types::Date)                                     \
+   case Char_1: ACTION_TO_APPLY(types::Char<1>)                                \
+   case Char_6: ACTION_TO_APPLY(types::Char<6>)                                \
+   case Char_7: ACTION_TO_APPLY(types::Char<7>)                                \
+   case Char_9: ACTION_TO_APPLY(types::Char<9>)                                \
+   case Char_10: ACTION_TO_APPLY(types::Char<10>)                              \
+   case Char_11: ACTION_TO_APPLY(types::Char<11>)                              \
+   case Char_12: ACTION_TO_APPLY(types::Char<12>)                              \
+   case Char_15: ACTION_TO_APPLY(types::Char<15>)                              \
+   case Char_18: ACTION_TO_APPLY(types::Char<18>)                              \
+   case Char_22: ACTION_TO_APPLY(types::Char<22>)                              \
+   case Char_25: ACTION_TO_APPLY(types::Char<25>)                              \
+   case Varchar_11: ACTION_TO_APPLY(types::Varchar<11>)                        \
+   case Varchar_12: ACTION_TO_APPLY(types::Varchar<12>)                        \
+   case Varchar_22: ACTION_TO_APPLY(types::Varchar<22>)                        \
+   case Varchar_23: ACTION_TO_APPLY(types::Varchar<23>)                        \
+   case Varchar_25: ACTION_TO_APPLY(types::Varchar<25>)                        \
+   case Varchar_40: ACTION_TO_APPLY(types::Varchar<40>)                        \
+   case Varchar_44: ACTION_TO_APPLY(types::Varchar<44>)                        \
+   case Varchar_55: ACTION_TO_APPLY(types::Varchar<55>)                        \
+   case Varchar_79: ACTION_TO_APPLY(types::Varchar<79>)                        \
+   case Varchar_101: ACTION_TO_APPLY(types::Varchar<101>)                      \
+   case Varchar_117: ACTION_TO_APPLY(types::Varchar<117>)                      \
+   case Varchar_152: ACTION_TO_APPLY(types::Varchar<152>)                      \
+   case Varchar_199: ACTION_TO_APPLY(types::Varchar<199>)
 
 typedef std::unordered_map<std::string, std::multimap<void*, unsigned>>
     UniqueValuesMap;
@@ -205,27 +205,27 @@ inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
    };
    auto& uniqueValsInColumn = uniqueVals->at(columnMetaData.name);
 
-#define D(type)                                                                \
+#define ACTION_TO_APPLY(type)                                                  \
    reinterpret_cast<std::multimap<type, int>&>(uniqueValsInColumn)             \
        .emplace(type::castString(start, size), rowNumber);                     \
    break;
 
-   switch (algebraToRTType(columnMetaData.type)) { EACHTYPE }
-#undef D
+   switch (algebraToRTType(columnMetaData.type)) { APPLY_ACTION_TO_RTTYPE }
+#undef ACTION_TO_APPLY
    begin = end + 1;
 }
 
 void writeBinary(ColumnConfig& col, std::vector<void*>& data,
                  std::string path) {
-#define D(type)                                                                \
+#define ACTION_TO_APPLY(type)                                                  \
    {                                                                           \
       auto name = path + "_" + col.name;                                       \
       runtime::Vector<type>::writeBinary(                                      \
           name.data(), reinterpret_cast<std::vector<type>&>(data));            \
       break;                                                                   \
    }
-   switch (algebraToRTType(col.type)) { EACHTYPE }
-#undef D
+   switch (algebraToRTType(col.type)) { APPLY_ACTION_TO_RTTYPE }
+#undef ACTION_TO_APPLY
 }
 
 void writeBinary(ColumnConfig& col, offset::RowIndex& data, std::string path) {
@@ -247,7 +247,7 @@ bool readBinary(ColumnConfig& col, offset::RowIndex& data, std::string path) {
 }
 
 size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
-#define D(rt_type)                                                             \
+#define ACTION_TO_APPLY(rt_type)                                               \
    {                                                                           \
       auto name = path + "_" + col.name;                                       \
       auto& attr = r[col.name];                                                \
@@ -258,28 +258,28 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
       return data.size();                                                      \
    }
    switch (algebraToRTType(col.type)) {
-      EACHTYPE default : throw runtime_error("Unknown type");
+      APPLY_ACTION_TO_RTTYPE default : throw runtime_error("Unknown type");
    }
-#undef D
+#undef ACTION_TO_APPLY
 }
 
 void computeOffsets(std::vector<void*>& col,
                     std::vector<unsigned>& colRowIndexes,
                     ColumnConfig& columnMetaData,
                     std::multimap<void*, unsigned> uniqueValsInCol) {
-#define D(type)                                                                \
+#define ACTION_TO_APPLY(type)                                                  \
    {                                                                           \
       auto values = getValues<type>(                                           \
           reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
-      computeRowIndexesAndFixOffsets<type, offset::type>(                                    \
+      computeRowIndexesAndFixOffsets<type, offset::type>(                      \
           columnMetaData, values, col, colRowIndexes,                          \
           reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
       break;                                                                   \
    }
 
-   switch (algebraToRTType(columnMetaData.type)) { EACHTYPE }
+   switch (algebraToRTType(columnMetaData.type)) { APPLY_ACTION_TO_RTTYPE }
 
-#undef D
+#undef ACTION_TO_APPLY
 }
 
 void parseColumns(offset::Relation& relation,
