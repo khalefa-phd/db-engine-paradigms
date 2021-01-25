@@ -164,9 +164,8 @@ target_link_libraries(hyper common)
 
 # offset library
 add_library(offset
-  src/offset/Types.cpp
   src/offset/Database.cpp
-  src/offset/Tpch.cpp
+  src/offset/Import.cpp
   )
 target_include_directories(offset PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -232,6 +231,16 @@ target_include_directories(run_tpch PUBLIC
     $<INSTALL_INTERFACE:include>
     PRIVATE src)
 target_link_libraries(run_tpch tpch hyper vectorwise common ${JEVENTSLIB})
+
+add_executable(run_tpch_offset
+  ${HYPER_TRANSLATORS}
+  src/offset/tpch/run.cpp
+  )
+target_include_directories(run_tpch_offset PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    PRIVATE src)
+target_link_libraries(run_tpch_offset tpch offset hyper vectorwise common ${JEVENTSLIB})
 
 file(GLOB SBBQUERIES src/benchmarks/sbb/queries/*.cpp)
 add_library(ssb

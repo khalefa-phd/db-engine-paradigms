@@ -27,7 +27,7 @@
 #include "vectorwise/defs.hpp"
 
 #include "offset/Database.hpp"
-#include "offset/Tpch.hpp"
+#include "offset/Import.hpp"
 #include "offset/Types.hpp"
 
 using namespace runtime;
