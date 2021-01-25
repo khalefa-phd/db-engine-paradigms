@@ -101,36 +101,3 @@ template <unsigned maxLen> class Varchar : runtime_types::Varchar<maxLen> {
 }; // namespace types
 
 }; // namespace offset
-
-/* #define COMMA ,
-#define APPLY_TO_OFFSET_TYPE                                                   \
-   case Integer: APPLY_TO_PROCEDURE(offset::runtime_types::Integer)            \
-   case Numeric_12_2:                                                          \
-      APPLY_TO_PROCEDURE(offset::runtime_types::Numeric<12 COMMA 2>)           \
-   case Numeric_18_2:                                                          \
-      APPLY_TO_PROCEDURE(offset::runtime_types::Numeric<18 COMMA 2>)           \
-   case Date: APPLY_TO_PROCEDURE(offset::runtime_types::Date)                  \
-   case Char_1: APPLY_TO_PROCEDURE(offset::runtime_types::Char<1>)             \
-   case Char_6: APPLY_TO_PROCEDURE(offset::runtime_types::Char<6>)             \
-   case Char_7: APPLY_TO_PROCEDURE(offset::runtime_types::Char<7>)             \
-   case Char_9: APPLY_TO_PROCEDURE(offset::runtime_types::Char<9>)             \
-   case Char_10: APPLY_TO_PROCEDURE(offset::runtime_types::Char<10>)           \
-   case Char_11: APPLY_TO_PROCEDURE(offset::runtime_types::Char<11>)           \
-   case Char_12: APPLY_TO_PROCEDURE(offset::runtime_types::Char<12>)           \
-   case Char_15: APPLY_TO_PROCEDURE(offset::runtime_types::Char<15>)           \
-   case Char_18: APPLY_TO_PROCEDURE(offset::runtime_types::Char<18>)           \
-   case Char_22: APPLY_TO_PROCEDURE(offset::runtime_types::Char<22>)           \
-   case Char_25: APPLY_TO_PROCEDURE(offset::runtime_types::Char<25>)           \
-   case Varchar_11: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<11>)     \
-   case Varchar_12: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<12>)     \
-   case Varchar_22: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<22>)     \
-   case Varchar_23: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<23>)     \
-   case Varchar_25: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<25>)     \
-   case Varchar_40: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<40>)     \
-   case Varchar_44: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<44>)     \
-   case Varchar_55: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<55>)     \
-   case Varchar_79: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<79>)     \
-   case Varchar_101: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<101>)   \
-   case Varchar_117: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<117>)   \
-   case Varchar_152: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<152>)   \
-   case Varchar_199: APPLY_TO_PROCEDURE(offset::runtime_types::Varchar<199>) */
