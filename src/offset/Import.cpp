@@ -195,7 +195,7 @@ inline void computeRowIndexesAndFixOffsets(
 
 inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
                   std::string& line, unsigned& begin, unsigned& end,
-                  uint64_t rowNumber) {
+                  unsigned rowNumber) {
 
    const char* start = line.data() + begin;
    end = line.find_first_of('|', begin);
@@ -206,7 +206,7 @@ inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
    auto& uniqueValsInColumn = uniqueVals->at(columnMetaData.name);
 
 #define ACTION_TO_APPLY(type)                                                  \
-   reinterpret_cast<std::multimap<type, int>&>(uniqueValsInColumn)             \
+   reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInColumn)        \
        .emplace(type::castString(start, size), rowNumber);                     \
    break;
 
@@ -311,7 +311,7 @@ void parseColumns(offset::Relation& relation,
          throw runtime_error("csv file not found: " + dir);
       string line;
       unsigned begin = 0, end;
-      uint64_t rowNumber = 0;
+      unsigned rowNumber = 0;
       while (getline(relationFile, line)) {
          rowNumber++;
          unsigned i = 0;
