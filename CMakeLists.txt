@@ -8,11 +8,12 @@ endif()
 
 if(LINUX)
 set(CMAKE_C_COMPILER gcc)
-set(CMAKE_CXX_COMPILER clang++)
-ADD_DEFINITIONS(-D_LIBCPP_VERSION=1) # tbb clang compatibility
+set(CMAKE_CXX_COMPILER g++)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=deprecated-copy") # GCC > 9.0 compatibility
 else()
 set(CMAKE_C_COMPILER gcc)
 set(CMAKE_CXX_COMPILER clang++)
+ADD_DEFINITIONS(-D_LIBCPP_VERSION=1) # tbb clang compatibility
 endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
