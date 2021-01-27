@@ -165,34 +165,6 @@ struct ColumnConfig {
 typedef std::unordered_map<std::string, std::multimap<void*, unsigned>>
     UniqueValuesMap;
 
-template <class T>
-inline std::vector<T> getValues(std::multimap<T, unsigned> mm) {
-   std::vector<T> keys;
-   for (auto it = mm.begin(), end = mm.end(); it != end;
-        it = mm.upper_bound(it->first)) {
-      auto key = it->first;
-      keys.emplace_back(key);
-   }
-   return keys;
-}
-
-template <class Type, class OffsetType>
-inline void computeRowIndexesAndFixOffsets(
-    ColumnConfig& columnMetaData, std::vector<Type>& values,
-    std::vector<void*>& col, std::vector<unsigned>& colRowIndexes,
-    std::multimap<Type, unsigned>& ocurrences) {
-
-   colRowIndexes.reserve(ocurrences.size());
-   for (auto value : values) {
-      auto range = ocurrences.equal_range(value);
-      auto offsetValue = OffsetType(value, colRowIndexes.size());
-      std::transform(
-          range.first, range.second, std::back_inserter(colRowIndexes),
-          [](std::pair<Type, unsigned> element) { return element.second; });
-      reinterpret_cast<vector<OffsetType>&>(col).emplace_back(offsetValue);
-   }
-}
-
 inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
                   std::string& line, unsigned& begin, unsigned& end,
                   unsigned rowNumber) {
@@ -266,14 +238,23 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
 void computeOffsets(std::vector<void*>& col,
                     std::vector<unsigned>& colRowIndexes,
                     ColumnConfig& columnMetaData,
-                    std::multimap<void*, unsigned> uniqueValsInCol) {
+                    std::multimap<void*, unsigned>& uniqueValsInCol) {
 #define ACTION_TO_APPLY(type)                                                  \
    {                                                                           \
-      auto values = getValues<type>(                                           \
-          reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
-      computeRowIndexesAndFixOffsets<type, offset::type>(                      \
-          columnMetaData, values, col, colRowIndexes,                          \
-          reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol));  \
+      auto& ocurrences =                                                       \
+          reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol);   \
+      colRowIndexes.reserve(ocurrences.size());                                \
+      for (auto it = ocurrences.begin(), end = ocurrences.end(); it != end;    \
+           it = ocurrences.upper_bound(it->first)) {                           \
+         auto value = it->first;                                               \
+         auto offsetValue = offset::type(value, colRowIndexes.size());         \
+         auto range = ocurrences.equal_range(value);                           \
+         reinterpret_cast<vector<offset::type>&>(col).emplace_back(            \
+             offsetValue);                                                     \
+         std::transform(range.first, range.second,                             \
+                        std::back_inserter(colRowIndexes),                     \
+                        [](auto const& element) { return element.second; });   \
+      }                                                                        \
       break;                                                                   \
    }
 
@@ -314,7 +295,6 @@ void parseColumns(offset::Relation& relation,
       unsigned rowNumber = 0;
       while (getline(relationFile, line)) {
          rowNumber++;
-         unsigned i = 0;
          for (auto& col : colsC)
             parse(col, &uniqueVals, line, begin, end, rowNumber);
          begin = 0;
