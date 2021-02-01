@@ -1,12 +1,23 @@
-#include <immintrin.h>
+#include "offset/Utils.hpp"
 
 inline __m256i _mm256_cmplt_epi32(__m256i a, __m256i b) {
    return _mm256_cmpgt_epi32(b, a);
 }
 
-inline size_t avx2_count_matches(unsigned* firstBegin, unsigned* firstEnd,
-                            unsigned* secondBegin, unsigned* secondEnd,
-                            unsigned limitStart, unsigned limitEnd) {
+/**
+ * Counts matching elements between two ranges.
+ * 
+ * If size of ranges differ, then the smaller range must be passed first.
+ * Elements must be sorted in ascending order. 
+ * 
+ * @param firstBegin iterator to first element in smaller range
+ * @param firstEnd iterator to final element in smaller range
+ * @param secondBegin iterator to first element in larger range
+ * @param secondEnd iterator to final element in larger range
+ * @return count of matching elements between ranges
+*/
+inline size_t offset::utils::avx2_count_matches(unsigned* firstBegin, unsigned* firstEnd,
+                            unsigned* secondBegin, unsigned* secondEnd) {
    size_t counter = 0;
    __m256i a_rep;
    __m256i b;
