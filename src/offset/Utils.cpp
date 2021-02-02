@@ -88,3 +88,34 @@ inline unsigned* offset::utils::avx2_inplace_set_intersection(
    }
    return intersectionEnd;
 }
+
+inline unsigned offset::utils::avx2_find_one_match(unsigned* firstBegin,
+                                                unsigned* firstEnd,
+                                                unsigned* secondBegin,
+                                                unsigned* secondEnd) {
+   unsigned match = std::numeric_limits<unsigned>::quiet_NaN();
+   __m256i a_rep = _mm256_set1_epi32(*firstBegin);
+   __m256i b =
+       _mm256_loadu_si256(reinterpret_cast<const __m256i*>(secondBegin));
+
+   while (firstBegin < firstEnd && secondBegin < secondEnd) {
+      const __m256i lt = _mm256_cmplt_epi32(b, a_rep);
+      const auto mask = _mm256_movemask_epi8(lt);
+      if (mask == 0xffff) {
+         secondBegin += 8;
+         b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(secondBegin));
+      } else {
+         for (size_t i = 0; i < 8; i++) {
+            auto possibleMatch = secondBegin + i;
+            if ((possibleMatch < secondEnd) &&
+                (*possibleMatch == *firstBegin)) {
+               match = *possibleMatch;
+               return match;
+            }
+         }
+         firstBegin++;
+         a_rep = _mm256_set1_epi32(*firstBegin);
+      }
+   }
+   return match;
+}

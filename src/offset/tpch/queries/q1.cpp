@@ -11,10 +11,13 @@
 #include "vectorwise/VectorAllocator.hpp"
 #include <algorithm>
 #include <deque>
+#include <execution>
 #include <iostream>
+#include <math.h>
 
 #include "offset/Database.hpp"
 #include "offset/Types.hpp"
+#include "offset/Utils.hpp"
 
 using namespace std;
 using vectorwise::primitives::Char_1;
@@ -39,27 +42,8 @@ using vectorwise::primitives::hash_t;
 //    l_returnflag,
 //    l_linestatus
 
-template <class T>
-inline T& find(T* col, size_t colSize, offset::RowIndex colRowIndexes,
-               unsigned indexToFind) {
-   unsigned start = 0, end;
-   T& uniqueValue = null;
-   for (unsigned i = 0; i < colSize; ++i) {
-      uniqueValue = col[i];
-      end = uniqueValue.offset;
-      if (colRowIndexes[end] <= indexToFind) {
-         auto searchStart = &colRowIndexes[start];
-         auto searchEnd = &colRowIndexes[end];
-         auto found = std::binary_search(searchStart, searchEnd, indexToFind);
-         if (found) { break; }
-      }
-      start = end + 1;
-   }
-   return uniqueValue;
-}
-
-NOVECTORIZE std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
-                                                      size_t nrThreads) {
+std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
+                                          size_t nrThreads) {
    using namespace types;
    using namespace std;
    types::Date c1 = types::Date::castString("1998-09-02");
@@ -73,83 +57,84 @@ NOVECTORIZE std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
    auto l_quantity = li["l_quantity"].data<types::Numeric<12, 2>>();
    auto l_shipdate = li["l_shipdate"].data<types::Date>();
 
+   auto l_shipdate_ri = li.getRowIndex("l_shipdate");
+   auto l_returnflag_ri = li.getRowIndex("l_returnflag");
+   auto l_linestatus_ri = li.getRowIndex("l_linestatus");
+
+   unsigned l_shipdate_size = *(&l_shipdate + 1) - l_shipdate;
+   unsigned l_returnflag_size = *(&l_returnflag + 1) - l_returnflag;
+   unsigned l_linestatus_size = *(&l_linestatus + 1) - l_linestatus;
+
    auto resources = initQuery(nrThreads);
 
    using hash = runtime::CRC32Hash;
+   typedef tbb::concurrent_hash_map<std::tuple<types::Char<1>,types::Char<1>>,bool> HashTable;
 
-   auto groupOp = make_GroupBy<tuple<Char<1>, Char<1>>,
-                               tuple<Numeric<12, 2>, Numeric<12, 2>,
-                                     Numeric<12, 4>, Numeric<12, 6>, int64_t>,
-                               hash>(
-       [](auto& acc, auto&& value) {
-          get<0>(acc) += get<0>(value);
-          get<1>(acc) += get<1>(value);
-          get<2>(acc) += get<2>(value);
-          get<3>(acc) += get<3>(value);
-          get<4>(acc) += get<4>(value);
-       },
-       make_tuple(Numeric<12, 2>(), Numeric<12, 2>(), Numeric<12, 4>(),
-                  Numeric<12, 6>(), int64_t(0)),
-       nrThreads);
+   tbb::blocked_range3d<unsigned, unsigned, unsigned> range(
+       0, l_shipdate_size, 4, 0, l_returnflag_size, 4, 0, l_linestatus_size, 4);
 
    tbb::parallel_for(
-       tbb::blocked_range<size_t>(0, li.nrTuples, morselSize),
-       [&](const tbb::blocked_range<size_t>& r) {
-          auto locals = groupOp.preAggLocals();
-          for (size_t i = r.begin(), end = r.end(); i != end; ++i) {
-             if (l_shipdate[i] <= c1) {
-                auto& group = locals.getGroup(
-                    make_tuple(l_returnflag[i], l_linestatus[i]));
-
-                get<0>(group) += l_quantity[i];
-                get<1>(group) += l_extendedprice[i];
-                auto disc_price = l_extendedprice[i] * (one - l_discount[i]);
-                get<2>(group) += disc_price;
-                auto charge = disc_price * (one + l_tax[i]);
-                get<3>(group) += charge;
-                get<4>(group) += 1;
+       range,
+       [&](const tbb::blocked_range3d<size_t, size_t, size_t>& r) {
+          size_t is = r.pages().begin();
+          size_t ie = r.pages().end();
+          size_t js = r.rows().begin();
+          size_t je = r.rows().end();
+          size_t ks = r.cols().end();
+          size_t ke = r.cols().end();
+          // start l_shipdate's interval lower limit at the upper limit of the
+          // previous unique value
+          auto il = is != 0 ? reinterpret_cast<offset::types::Date*>(
+                                  l_shipdate + (is - 1))
+                                  ->offset
+                            : (unsigned)0;
+          // start l_returnflag's interval lower limit at the upper limit of the
+          // previous unique value
+          auto jl = js != 0 ? reinterpret_cast<offset::types::Char<1>*>(
+                                  l_returnflag + (js - 1))
+                                  ->offset
+                            : (unsigned)0;
+          // start l_linestatus' interval lower limit at the upper limit of the
+          // previous unique value
+          auto kl = ks != 0 ? reinterpret_cast<offset::types::Char<1>*>(
+                                  l_linestatus + (ks - 1))
+                                  ->offset
+                            : (unsigned)0;
+          for (size_t i = is; i < ie; ++i) {
+             if (l_shipdate[i] < c1) {
+                auto iu = reinterpret_cast<offset::types::Date*>(l_shipdate + i)
+                              ->offset;
+                for (size_t j = js; j < je; ++j) {
+                   auto ju = reinterpret_cast<offset::types::Char<1>*>(
+                                 l_returnflag + j)
+                                 ->offset;
+                   std::vector<unsigned> intersection;
+                   std::set_intersection(
+                       std::execution::unseq, &(l_shipdate_ri[il]),
+                       &(l_shipdate_ri[iu]), &(l_returnflag_ri[jl]),
+                       &(l_returnflag_ri[ju]),
+                       std::back_inserter(intersection));
+                   if (!intersection.empty()) {
+                      for (size_t k = ks; k < ke; ++k) {
+                         auto ku = reinterpret_cast<offset::types::Char<1>*>(
+                                       l_linestatus + k)
+                                       ->offset;
+                         auto match = offset::utils::avx2_find_one_match(
+                             &(*intersection.begin()), &(*intersection.end()),
+                             &(l_linestatus_ri[kl]), &(l_linestatus_ri[ku]));
+                         if (!std::isnan(match)) {
+                            
+                         }
+                      }
+                   }
+                }
              }
           }
-       });
-
+       },
+       tbb::simple_partitioner());
    auto& result = resources.query->result;
    auto retAttr = result->addAttribute("l_returnflag", sizeof(Char<1>));
    auto statusAttr = result->addAttribute("l_linestatus", sizeof(Char<1>));
-   auto qtyAttr = result->addAttribute("sum_qty", sizeof(Numeric<12, 2>));
-   auto base_priceAttr =
-       result->addAttribute("sum_base_price", sizeof(Numeric<12, 2>));
-   auto disc_priceAttr =
-       result->addAttribute("sum_disc_price", sizeof(Numeric<12, 2>));
-   auto chargeAttr = result->addAttribute("sum_charge", sizeof(Numeric<12, 2>));
-   auto count_orderAttr = result->addAttribute("count_order", sizeof(int64_t));
-
-   groupOp.forallGroups(
-       [&](runtime::Stack<decltype(groupOp)::group_t>& /*auto&*/ entries) {
-          auto n = entries.size();
-          auto block = result->createBlock(n);
-          auto ret = reinterpret_cast<Char<1>*>(block.data(retAttr));
-          auto status = reinterpret_cast<Char<1>*>(block.data(statusAttr));
-          auto qty = reinterpret_cast<Numeric<12, 2>*>(block.data(qtyAttr));
-          auto base_price =
-              reinterpret_cast<Numeric<12, 2>*>(block.data(base_priceAttr));
-          auto disc_price =
-              reinterpret_cast<Numeric<12, 4>*>(block.data(disc_priceAttr));
-          auto charge =
-              reinterpret_cast<Numeric<12, 6>*>(block.data(chargeAttr));
-          auto count_order =
-              reinterpret_cast<int64_t*>(block.data(count_orderAttr));
-          for (auto block : entries)
-             for (auto& entry : block) {
-                *ret++ = get<0>(entry.k);
-                *status++ = get<1>(entry.k);
-                *qty++ = get<0>(entry.v);
-                *base_price++ = get<1>(entry.v);
-                *disc_price++ = get<2>(entry.v);
-                *charge++ = get<3>(entry.v);
-                *count_order++ = get<4>(entry.v);
-             }
-          block.addedElements(n);
-       });
 
    leaveQuery(nrThreads);
    return move(resources.query);
