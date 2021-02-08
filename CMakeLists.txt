@@ -167,6 +167,7 @@ target_link_libraries(hyper common)
 add_library(offset
   src/offset/Database.cpp
   src/offset/Import.cpp
+  src/offset/Utils.cpp
   )
 target_include_directories(offset PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -214,14 +215,16 @@ target_include_directories(benchmark_config PUBLIC
 target_link_libraries(benchmark_config vectorwise common)
 
 file(GLOB TPCHQUERIES src/benchmarks/tpch/queries/*.cpp)
+file(GLOB OFFSETTPCHQUERIES src/offset/tpch/queries/*.cpp)
 add_library(tpch
   ${TPCHQUERIES}
+  ${OFFSETTPCHQUERIES}
   )
 target_include_directories(tpch PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
     PRIVATE src)
-target_link_libraries(tpch benchmark_config pthread hyper ${TBB_LIBRARIES} vectorwise common)
+target_link_libraries(tpch benchmark_config pthread hyper offset ${TBB_LIBRARIES} vectorwise common)
 
 add_executable(run_tpch
   ${HYPER_TRANSLATORS}
