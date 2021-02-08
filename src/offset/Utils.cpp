@@ -1,8 +1,14 @@
 #include "offset/Utils.hpp"
 
+#ifdef __AVX2__
 inline __m256i _mm256_cmplt_epi32(__m256i a, __m256i b) {
    return _mm256_cmpgt_epi32(b, a);
 }
+#endif
+
+#if defined(__AVX512F__) && defined(__AVX512CD__) && defined(__AVX512DQ__)
+typedef SIMDint __m512i;
+#endif
 
 /**
  * Counts matching elements between two ranges.
@@ -16,7 +22,7 @@ inline __m256i _mm256_cmplt_epi32(__m256i a, __m256i b) {
  * @param secondEnd iterator to final element in larger range
  * @return count of matching elements between ranges
  */
-inline size_t offset::utils::avx2_count_matches(unsigned* firstBegin,
+size_t offset::utils::avx2_count_matches(unsigned* firstBegin,
                                                 unsigned* firstEnd,
                                                 unsigned* secondBegin,
                                                 unsigned* secondEnd) {
@@ -53,7 +59,7 @@ inline size_t offset::utils::avx2_count_matches(unsigned* firstBegin,
    return counter;
 }
 
-inline unsigned* offset::utils::avx2_inplace_set_intersection(
+unsigned* offset::utils::avx2_inplace_set_intersection(
     unsigned* firstBegin, unsigned* firstEnd, unsigned* secondBegin,
     unsigned* secondEnd) {
    __m256i a_rep;
@@ -89,7 +95,7 @@ inline unsigned* offset::utils::avx2_inplace_set_intersection(
    return intersectionEnd;
 }
 
-inline unsigned offset::utils::avx2_find_one_match(unsigned* firstBegin,
+unsigned offset::utils::avx2_find_one_match(unsigned* firstBegin,
                                                 unsigned* firstEnd,
                                                 unsigned* secondBegin,
                                                 unsigned* secondEnd) {
