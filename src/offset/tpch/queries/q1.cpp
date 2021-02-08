@@ -3,6 +3,7 @@
 #include "common/runtime/Types.hpp"
 #include "hyper/GroupBy.hpp"
 #include "hyper/ParallelHelper.hpp"
+#include "tbb/enumerable_thread_specific.h"
 #include "tbb/tbb.h"
 #include "vectorwise/Operations.hpp"
 #include "vectorwise/Operators.hpp"
@@ -42,6 +43,47 @@ using vectorwise::primitives::hash_t;
 //    l_returnflag,
 //    l_linestatus
 
+using GroupKey = std::tuple<types::Char<1>, types::Char<1>>;
+// Tuple has begin and end position of the intersection
+// between the row indexes of the elements in the group's key
+using GroupRowIndexes = std::tuple<unsigned*, unsigned*>;
+using Group = std::tuple<GroupKey&, GroupRowIndexes&>;
+using vector_t = std::vector<Group>;
+using Groups = tbb::enumerable_thread_specific<vector_t>;
+
+template <typename Type>
+inline size_t get_lower_limit(size_t position, Type* uniqueValues) {
+   return reinterpret_cast<offset::Type*>(uniqueValues + (position - 1))
+       ->offset;
+}
+
+template <typename Type>
+inline size_t get_upper_limit(size_t position, Type* uniqueValues) {
+   return reinterpret_cast<offset::Type*>(uniqueValues + position)->offset;
+}
+
+template <typename Type, typename ResultType>
+inline ResultType sum(Type* col, size_t colSize, offset::RowIndex colRowIndex,
+                      GroupRowIndexes groupRowIndexes) {
+   auto range = tbb::blocked_range<size_t>(0, colSize, 64);
+   return tbb::parallel_reduce(
+       range, ResultType(),
+       [&](const tbb::blocked_range<size_t>& r, ResultType init) -> ResultType {
+          size_t is = r.begin();
+          size_t ie = r.end();
+          auto il = is != 0 ? get_lower_limit<Type>(is, col) : size_t(0);
+          for (size_t i = is; i < ie; ++i) {
+             auto iu = get_upper_limit<Type>(i, col);
+             auto ocurrences = offset::utils::avx2_count_matches(
+                 get<0>(groupRowIndexes), get<1>(groupRowIndexes),
+                 &(colRowIndex[il]), &(colRowIndex[iu]));
+             init += Type(ocurrences) * col[i];
+             il = iu;
+          }
+       },
+       [](ResultType a, ResultType b) -> ResultType { return a + b; });
+}
+
 std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
                                           size_t nrThreads) {
    using namespace types;
@@ -57,22 +99,29 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
    auto l_quantity = li["l_quantity"].data<types::Numeric<12, 2>>();
    auto l_shipdate = li["l_shipdate"].data<types::Date>();
 
-   auto l_shipdate_ri = li.getRowIndex("l_shipdate");
-   auto l_returnflag_ri = li.getRowIndex("l_returnflag");
-   auto l_linestatus_ri = li.getRowIndex("l_linestatus");
+   auto& l_shipdate_ri = li.getRowIndex("l_shipdate");
+   auto& l_returnflag_ri = li.getRowIndex("l_returnflag");
+   auto& l_linestatus_ri = li.getRowIndex("l_linestatus");
+   auto& l_quantity_ri = li.getRowIndex("l_quantity");
+   auto& l_extendedprice_ri = li.getRowIndex("l_extendedprice");
 
    unsigned l_shipdate_size = *(&l_shipdate + 1) - l_shipdate;
    unsigned l_returnflag_size = *(&l_returnflag + 1) - l_returnflag;
    unsigned l_linestatus_size = *(&l_linestatus + 1) - l_linestatus;
+   unsigned l_extendedprice_size = *(&l_extendedprice + 1) - l_extendedprice;
+   unsigned l_quantity_size = *(&l_quantity + 1) - l_quantity;
+   unsigned l_tax_size = *(&l_tax + 1) - l_tax;
+   unsigned l_discount_size = *(&l_discount + 1) - l_discount;
 
    auto resources = initQuery(nrThreads);
 
-   using hash = runtime::CRC32Hash;
-   typedef tbb::concurrent_hash_map<std::tuple<types::Char<1>,types::Char<1>>,bool> HashTable;
+   Groups groups;
 
    tbb::blocked_range3d<unsigned, unsigned, unsigned> range(
        0, l_shipdate_size, 4, 0, l_returnflag_size, 4, 0, l_linestatus_size, 4);
 
+   // I can use reduce to emit tuples of groups and the resulting intersection
+   // Threads will only produce unique groups
    tbb::parallel_for(
        range,
        [&](const tbb::blocked_range3d<size_t, size_t, size_t>& r) {
@@ -84,30 +133,21 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
           size_t ke = r.cols().end();
           // start l_shipdate's interval lower limit at the upper limit of the
           // previous unique value
-          auto il = is != 0 ? reinterpret_cast<offset::types::Date*>(
-                                  l_shipdate + (is - 1))
-                                  ->offset
-                            : (unsigned)0;
+          auto il = is != 0 ? get_lower_limit<types::Date>(is, l_shipdate)
+                            : size_t(0);
           // start l_returnflag's interval lower limit at the upper limit of the
           // previous unique value
-          auto jl = js != 0 ? reinterpret_cast<offset::types::Char<1>*>(
-                                  l_returnflag + (js - 1))
-                                  ->offset
-                            : (unsigned)0;
+          auto jl = js != 0 ? get_lower_limit<types::Char<1>>(js, l_returnflag)
+                            : size_t(0);
           // start l_linestatus' interval lower limit at the upper limit of the
           // previous unique value
-          auto kl = ks != 0 ? reinterpret_cast<offset::types::Char<1>*>(
-                                  l_linestatus + (ks - 1))
-                                  ->offset
-                            : (unsigned)0;
+          auto kl = ks != 0 ? get_lower_limit<types::Char<1>>(ks, l_linestatus)
+                            : size_t(0);
           for (size_t i = is; i < ie; ++i) {
+             auto iu = get_upper_limit<types::Date>(i, l_shipdate);
              if (l_shipdate[i] < c1) {
-                auto iu = reinterpret_cast<offset::types::Date*>(l_shipdate + i)
-                              ->offset;
                 for (size_t j = js; j < je; ++j) {
-                   auto ju = reinterpret_cast<offset::types::Char<1>*>(
-                                 l_returnflag + j)
-                                 ->offset;
+                   auto ju = get_upper_limit<types::Char<1>>(j, l_returnflag);
                    std::vector<unsigned> intersection;
                    std::set_intersection(
                        std::execution::unseq, &(l_shipdate_ri[il]),
@@ -116,25 +156,76 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
                        std::back_inserter(intersection));
                    if (!intersection.empty()) {
                       for (size_t k = ks; k < ke; ++k) {
-                         auto ku = reinterpret_cast<offset::types::Char<1>*>(
-                                       l_linestatus + k)
-                                       ->offset;
-                         auto match = offset::utils::avx2_find_one_match(
-                             &(*intersection.begin()), &(*intersection.end()),
-                             &(l_linestatus_ri[kl]), &(l_linestatus_ri[ku]));
-                         if (!std::isnan(match)) {
-                            
+                         auto ku =
+                             get_upper_limit<types::Char<1>>(k, l_linestatus);
+                         auto groupRowIndexesBegin = &(*intersection.begin());
+                         auto groupRowIndexesEnd =
+                             offset::utils::avx2_inplace_set_intersection(
+                                 &(*intersection.begin()),
+                                 &(*intersection.end()), &(l_linestatus_ri[kl]),
+                                 &(l_linestatus_ri[ku]));
+                         if (groupRowIndexesEnd != groupRowIndexesBegin) {
+                            Groups::reference group = groups.local();
+                            group.emplace_back(make_tuple(
+                                make_tuple(l_returnflag[j], l_linestatus[k]),
+                                make_tuple(groupRowIndexesBegin,
+                                           groupRowIndexesEnd)));
                          }
+                         kl = ku;
                       }
                    }
+                   jl = ju;
                 }
              }
+             il = iu;
           }
        },
        tbb::simple_partitioner());
+
    auto& result = resources.query->result;
    auto retAttr = result->addAttribute("l_returnflag", sizeof(Char<1>));
    auto statusAttr = result->addAttribute("l_linestatus", sizeof(Char<1>));
+   auto qtyAttr = result->addAttribute("sum_qty", sizeof(Numeric<12, 4>));
+   auto base_priceAttr =
+       result->addAttribute("sum_base_price", sizeof(Numeric<12, 4>));
+   auto disc_priceAttr =
+       result->addAttribute("sum_disc_price", sizeof(Numeric<12, 2>));
+   auto chargeAttr = result->addAttribute("sum_charge", sizeof(Numeric<12, 2>));
+   auto count_orderAttr = result->addAttribute("count_order", sizeof(int64_t));
+
+   tbb::parallel_for(groups.range(), [&](Groups::range_type const& r) {
+      for (auto& groups : r) {
+         auto groupsToProcess = groups.size();
+
+         auto block = result->createBlock(groupsToProcess);
+         auto ret = reinterpret_cast<Char<1>*>(block.data(retAttr));
+         auto status = reinterpret_cast<Char<1>*>(block.data(statusAttr));
+         auto qty = reinterpret_cast<Numeric<12, 4>*>(block.data(qtyAttr));
+         auto base_price =
+             reinterpret_cast<Numeric<12, 4>*>(block.data(base_priceAttr));
+         auto disc_price =
+             reinterpret_cast<Numeric<12, 4>*>(block.data(disc_priceAttr));
+         auto charge =
+             reinterpret_cast<Numeric<12, 6>*>(block.data(chargeAttr));
+         auto count_order =
+             reinterpret_cast<int64_t*>(block.data(count_orderAttr));
+         for (auto& group : groups) {
+            auto& key = get<0>(group);
+            *ret++ = get<0>(key);
+            *status++ = get<1>(key);
+
+            auto& groupRowIndexes = get<1>(group);
+
+            *qty++ = sum<types::Numeric<12, 2>, types::Numeric<12, 4>>(
+                l_quantity, l_quantity_size, l_quantity_ri,
+                groupRowIndexes);
+
+            *base_price++ = sum<types::Numeric<12, 2>, types::Numeric<12, 4>>(
+                l_extendedprice, l_extendedprice_size, l_extendedprice_ri,
+                groupRowIndexes);
+         }
+      }
+   });
 
    leaveQuery(nrThreads);
    return move(resources.query);
