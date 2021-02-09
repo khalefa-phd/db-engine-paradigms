@@ -40,6 +40,9 @@ class Numeric : public runtime_types::Numeric<len, precision> {
  public:
    int64_t value;
    uint32_t offset;
+   Numeric() : value(0), offset(NULL) {}
+   Numeric(runtime_types::Numeric<len, precision> value)
+       : value(value.value), offset(NULL) {}
    Numeric(runtime_types::Numeric<len, precision> value, uint32_t offset)
        : value(value.value), offset(offset) {}
    Numeric(runtime_types::Integer x, uint32_t offset)
@@ -60,6 +63,7 @@ class Date : public runtime_types::Date {
    int32_t value;
    uint32_t offset;
 
+   Date(runtime_types::Date value) : value(value.value), offset(NULL) {}
    Date(runtime_types::Date value, uint32_t offset)
        : value(value.value), offset(offset) {}
    Date(int32_t value, uint32_t offset) : value(value), offset(offset) {}

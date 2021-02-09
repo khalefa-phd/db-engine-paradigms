@@ -44,7 +44,7 @@ using vectorwise::primitives::hash_t;
 //    l_returnflag,
 //    l_linestatus
 
-using GroupKey = std::tuple<types::Char<1>, types::Char<1>>;
+using GroupKey = std::tuple<offset::types::Char<1>, offset::types::Char<1>>;
 // Tuple has begin and end position of the intersection
 // between the row indexes of the elements in the group's key
 using GroupRowIndexes = std::tuple<unsigned*, unsigned*>;
@@ -53,17 +53,16 @@ using vector_t = std::vector<Group>;
 using Groups = tbb::enumerable_thread_specific<vector_t>;
 
 template <typename OffsetType>
-inline size_t get_lower_limit(size_t position, auto *uniqueValues) {
-   return reinterpret_cast<OffsetType*>(uniqueValues + (position - 1))
-       ->offset;
+inline size_t get_lower_limit(size_t position, auto* uniqueValues) {
+   return reinterpret_cast<OffsetType*>(uniqueValues + (position - 1))->offset;
 }
 
 template <typename OffsetType>
-inline size_t get_upper_limit(size_t position, auto *uniqueValues) {
+inline size_t get_upper_limit(size_t position, auto* uniqueValues) {
    return reinterpret_cast<OffsetType*>(uniqueValues + position)->offset - 1;
 }
 
-template <typename Type, typename ResultType, typename OffsetType>
+template <typename ResultType, typename Type>
 inline ResultType sum(Type* col, size_t colSize, offset::RowIndex colRowIndex,
                       GroupRowIndexes groupRowIndexes) {
    auto range = tbb::blocked_range<size_t>(0, colSize, 64);
@@ -72,9 +71,9 @@ inline ResultType sum(Type* col, size_t colSize, offset::RowIndex colRowIndex,
        [&](const tbb::blocked_range<size_t>& r, ResultType init) -> ResultType {
           size_t is = r.begin();
           size_t ie = r.end();
-          auto il = is != 0 ? get_lower_limit<OffsetType>(is, col) : size_t(0);
+          auto il = is != 0 ? get_lower_limit<Type>(is, col) : size_t(0);
           for (size_t i = is; i < ie; ++i) {
-             auto iu = get_upper_limit<OffsetType>(i, col);
+             auto iu = get_upper_limit<Type>(i, col);
              auto ocurrences = offset::utils::avx2_count_matches(
                  get<0>(groupRowIndexes), get<1>(groupRowIndexes),
                  &(colRowIndex[il]), &(colRowIndex[iu]));
@@ -96,8 +95,9 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
                                           size_t nrThreads) {
    using namespace types;
    using namespace std;
-   rtypes::Date c1 = rtypes::Date::castString("1998-09-02");
-   rtypes::Numeric<12, 2> one = rtypes::Numeric<12, 2>::castString("1.00");
+   types::Date c1 = types::Date(rtypes::Date::castString("1998-09-02"));
+   types::Numeric<12, 2> one =
+       types::Numeric<12, 2>(rtypes::Numeric<12, 2>::castString("1.00"));
    auto& li = db["lineitem"];
    auto l_returnflag = li["l_returnflag"].data<types::Char<1>>();
    auto l_linestatus = li["l_linestatus"].data<types::Char<1>>();
@@ -113,20 +113,27 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
    auto& l_quantity_ri = li.getRowIndex("l_quantity");
    auto& l_extendedprice_ri = li.getRowIndex("l_extendedprice");
 
-   unsigned l_shipdate_size = li["l_shipdate"].typedAccess<rtypes::Date>().size();
-   unsigned l_returnflag_size = li["l_returnflag"].typedAccess<rtypes::Char<1>>().size();
-   unsigned l_linestatus_size = li["l_linestatus"].typedAccess<rtypes::Char<1>>().size();
-   unsigned l_extendedprice_size = li["l_extendedprice"].typedAccess<rtypes::Numeric<12, 2>>().size();
-   unsigned l_quantity_size = li["l_quantity"].typedAccess<rtypes::Numeric<12, 2>>().size();
-   unsigned l_tax_size = li["l_tax"].typedAccess<rtypes::Numeric<12, 2>>().size();
-   unsigned l_discount_size = li["l_discount"].typedAccess<rtypes::Numeric<12, 2>>().size();
+   unsigned l_shipdate_size =
+       li["l_shipdate"].typedAccess<types::Date>().size();
+   unsigned l_returnflag_size =
+       li["l_returnflag"].typedAccess<types::Char<1>>().size();
+   unsigned l_linestatus_size =
+       li["l_linestatus"].typedAccess<types::Char<1>>().size();
+   unsigned l_extendedprice_size =
+       li["l_extendedprice"].typedAccess<types::Numeric<12, 2>>().size();
+   unsigned l_quantity_size =
+       li["l_quantity"].typedAccess<types::Numeric<12, 2>>().size();
+   unsigned l_tax_size =
+       li["l_tax"].typedAccess<types::Numeric<12, 2>>().size();
+   unsigned l_discount_size =
+       li["l_discount"].typedAccess<types::Numeric<12, 2>>().size();
 
    auto resources = initQuery(nrThreads);
 
    Groups groups;
 
    tbb::blocked_range3d<size_t, size_t, size_t> range(
-       0, l_shipdate_size, 64, 0, l_returnflag_size, 64, 0, l_linestatus_size, 64);
+       0, l_shipdate_size, 2, 0, l_returnflag_size, 2, 0, l_linestatus_size, 2);
 
    // I can use reduce to emit tuples of groups and the resulting intersection
    // Threads will only produce unique groups
@@ -137,26 +144,32 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
           size_t ie = r.pages().end();
           size_t js = r.rows().begin();
           size_t je = r.rows().end();
-          size_t ks = r.cols().end();
+          size_t ks = r.cols().begin();
           size_t ke = r.cols().end();
           // start l_shipdate's interval lower limit at the upper limit of the
           // previous unique value
-          auto il = is != 0 ? get_lower_limit<offset::types::Date>(is, l_shipdate)
-                            : size_t(0);
+          auto il = is != 0
+                        ? get_lower_limit<offset::types::Date>(is, l_shipdate)
+                        : size_t(0);
           // start l_returnflag's interval lower limit at the upper limit of the
           // previous unique value
-          auto jl = js != 0 ? get_lower_limit<offset::types::Char<1>>(js, l_returnflag)
-                            : size_t(0);
+          auto jl =
+              js != 0
+                  ? get_lower_limit<offset::types::Char<1>>(js, l_returnflag)
+                  : size_t(0);
           // start l_linestatus' interval lower limit at the upper limit of the
           // previous unique value
-          auto kl = ks != 0 ? get_lower_limit<offset::types::Char<1>>(ks, l_linestatus)
-                            : size_t(0);
+          auto kl =
+              ks != 0
+                  ? get_lower_limit<offset::types::Char<1>>(ks, l_linestatus)
+                  : size_t(0);
 
           for (size_t i = is; i < ie; ++i) {
              auto iu = get_upper_limit<offset::types::Date>(i, l_shipdate);
-             if (l_shipdate[i] < c1) {
+             if (l_shipdate[i].value < c1.value) {
                 for (size_t j = js; j < je; ++j) {
-                   auto ju = get_upper_limit<offset::types::Char<1>>(j, l_returnflag);
+                   auto ju =
+                       get_upper_limit<offset::types::Char<1>>(j, l_returnflag);
                    std::vector<unsigned> intersection;
                    std::set_intersection(
                        std::execution::unseq, &(l_shipdate_ri[il]),
@@ -165,8 +178,8 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
                        std::back_inserter(intersection));
                    if (!intersection.empty()) {
                       for (size_t k = ks; k < ke; ++k) {
-			auto ku =
-                             get_upper_limit<offset::types::Char<1>>(k, l_linestatus);
+                         auto ku = get_upper_limit<offset::types::Char<1>>(
+                             k, l_linestatus);
                          auto groupRowIndexesBegin = &(*intersection.begin());
                          auto groupRowIndexesEnd =
                              offset::utils::avx2_inplace_set_intersection(
@@ -180,26 +193,29 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
                                 make_tuple(groupRowIndexesBegin,
                                            groupRowIndexesEnd)));
                          }
-                         kl = ku+1;
+                         kl = ku + 1;
                       }
                    }
-                   jl = ju+1;
+                   jl = ju + 1;
                 }
              }
-             il = iu+1;
+             il = iu + 1;
           }
        },
        tbb::simple_partitioner());
 
    auto& result = resources.query->result;
-   auto retAttr = result->addAttribute("l_returnflag", sizeof(rtypes::Char<1>));
-   auto statusAttr = result->addAttribute("l_linestatus", sizeof(rtypes::Char<1>));
-   auto qtyAttr = result->addAttribute("sum_qty", sizeof(rtypes::Numeric<12, 4>));
+   auto retAttr = result->addAttribute("l_returnflag", sizeof(types::Char<1>));
+   auto statusAttr =
+       result->addAttribute("l_linestatus", sizeof(types::Char<1>));
+   auto qtyAttr =
+       result->addAttribute("sum_qty", sizeof(types::Numeric<12, 4>));
    auto base_priceAttr =
-       result->addAttribute("sum_base_price", sizeof(rtypes::Numeric<12, 4>));
+       result->addAttribute("sum_base_price", sizeof(types::Numeric<12, 4>));
    auto disc_priceAttr =
-       result->addAttribute("sum_disc_price", sizeof(rtypes::Numeric<12, 2>));
-   auto chargeAttr = result->addAttribute("sum_charge", sizeof(rtypes::Numeric<12, 2>));
+       result->addAttribute("sum_disc_price", sizeof(types::Numeric<12, 2>));
+   auto chargeAttr =
+       result->addAttribute("sum_charge", sizeof(types::Numeric<12, 2>));
    auto count_orderAttr = result->addAttribute("count_order", sizeof(int64_t));
 
    tbb::parallel_for(groups.range(), [&](Groups::range_type const& r) {
@@ -208,12 +224,14 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
 
          auto block = result->createBlock(groupsToProcess);
          auto ret = reinterpret_cast<rtypes::Char<1>*>(block.data(retAttr));
-         auto status = reinterpret_cast<rtypes::Char<1>*>(block.data(statusAttr));
-         auto qty = reinterpret_cast<rtypes::Numeric<12, 4>*>(block.data(qtyAttr));
-         auto base_price =
-             reinterpret_cast<rtypes::Numeric<12, 4>*>(block.data(base_priceAttr));
-         auto disc_price =
-             reinterpret_cast<rtypes::Numeric<12, 4>*>(block.data(disc_priceAttr));
+         auto status =
+             reinterpret_cast<rtypes::Char<1>*>(block.data(statusAttr));
+         auto qty =
+             reinterpret_cast<rtypes::Numeric<12, 4>*>(block.data(qtyAttr));
+         auto base_price = reinterpret_cast<rtypes::Numeric<12, 4>*>(
+             block.data(base_priceAttr));
+         auto disc_price = reinterpret_cast<rtypes::Numeric<12, 4>*>(
+             block.data(disc_priceAttr));
          auto charge =
              reinterpret_cast<rtypes::Numeric<12, 6>*>(block.data(chargeAttr));
          auto count_order =
@@ -225,12 +243,16 @@ std::unique_ptr<runtime::Query> q1_offset(offset::Database& db,
 
             auto& groupRowIndexes = get<1>(group);
 
-            *qty++ = sum<rtypes::Numeric<12, 2>, rtypes::Numeric<12, 4>, offset::types::Numeric<12,2>>(
+            *qty++ = sum<offset::types::Numeric<12, 4>,
+                         offset::types::Numeric<12, 2>>(
                 l_quantity, l_quantity_size, l_quantity_ri, groupRowIndexes);
 
-            *base_price++ = sum<rtypes::Numeric<12, 2>, rtypes::Numeric<12, 4>, offset::types::Numeric<12,2>>(
+            *base_price++ = sum<offset::types::Numeric<12, 4>,
+                                offset::types::Numeric<12, 2>>(
                 l_extendedprice, l_extendedprice_size, l_extendedprice_ri,
                 groupRowIndexes);
+            // cout << "ret: " << *(ret-1) << " status: " << *(status-1) << "
+            // qty: " << *(qty-1) << " base price: " << *(base_price-1) << endl;
          }
       }
    });
