@@ -165,17 +165,17 @@ struct ColumnConfig {
 typedef std::unordered_map<std::string, std::multimap<void*, unsigned>>
     UniqueValuesMap;
 
-inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap* uniqueVals,
+inline void parse(ColumnConfig& columnMetaData, UniqueValuesMap& uniqueVals,
                   std::string& line, unsigned& begin, unsigned& end,
                   unsigned rowNumber) {
 
    const char* start = line.data() + begin;
    end = line.find_first_of('|', begin);
    size_t size = end - begin;
-   if (!uniqueVals->contains(columnMetaData.name)) {
+   if (!uniqueVals.contains(columnMetaData.name)) {
       throw runtime_error("Column does not exist");
    };
-   auto& uniqueValsInColumn = uniqueVals->at(columnMetaData.name);
+   auto& uniqueValsInColumn = uniqueVals.at(columnMetaData.name);
 
 #define ACTION_TO_APPLY(type)                                                  \
    reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInColumn)        \
@@ -192,8 +192,8 @@ void writeBinary(ColumnConfig& col, std::vector<void*>& data,
 #define ACTION_TO_APPLY(type)                                                  \
    {                                                                           \
       auto name = path + "_" + col.name;                                       \
-      runtime::Vector<type>::writeBinary(                                      \
-          name.data(), reinterpret_cast<std::vector<type>&>(data));            \
+      runtime::Vector<offset::type>::writeBinary(                              \
+          name.data(), reinterpret_cast<std::vector<offset::type>&>(data));    \
       break;                                                                   \
    }
    switch (algebraToRTType(col.type)) { APPLY_ACTION_TO_RTTYPE }
@@ -225,7 +225,7 @@ size_t readBinary(runtime::Relation& r, ColumnConfig& col, std::string path) {
       auto& attr = r[col.name];                                                \
       /* attr.name = col.name;   */                                            \
       /*attr.type = col.type;  */                                              \
-      auto& data = attr.typedAccessForChange<rt_type>();                       \
+      auto& data = attr.typedAccessForChange<offset::rt_type>();               \
       data.readBinary(name.data());                                            \
       return data.size();                                                      \
    }
@@ -244,16 +244,18 @@ void computeOffsets(std::vector<void*>& col,
       auto& ocurrences =                                                       \
           reinterpret_cast<std::multimap<type, unsigned>&>(uniqueValsInCol);   \
       colRowIndexes.reserve(ocurrences.size());                                \
+      uint32_t count = 0;                                                      \
       for (auto it = ocurrences.begin(), end = ocurrences.end(); it != end;    \
            it = ocurrences.upper_bound(it->first)) {                           \
          auto value = it->first;                                               \
-         auto offsetValue = offset::type(value, colRowIndexes.size());         \
          auto range = ocurrences.equal_range(value);                           \
-         reinterpret_cast<vector<offset::type>&>(col).emplace_back(            \
-             offsetValue);                                                     \
          std::transform(range.first, range.second,                             \
                         std::back_inserter(colRowIndexes),                     \
                         [](auto const& element) { return element.second; });   \
+         count += (uint32_t)ocurrences.count(value);                           \
+         auto offsetValue = offset::type(value, count);                        \
+         reinterpret_cast<vector<offset::type>&>(col).emplace_back(            \
+             offsetValue);                                                     \
       }                                                                        \
       break;                                                                   \
    }
@@ -296,7 +298,7 @@ void parseColumns(offset::Relation& relation,
       while (getline(relationFile, line)) {
          rowNumber++;
          for (auto& col : colsC)
-            parse(col, &uniqueVals, line, begin, end, rowNumber);
+            parse(col, uniqueVals, line, begin, end, rowNumber);
          begin = 0;
       }
       std::vector<std::vector<void*>> attributes;
